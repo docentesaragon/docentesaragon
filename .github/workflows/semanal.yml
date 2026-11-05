@@ -1,1 +1,37 @@
+name: Descarga semanal de Educaragón
+
+on:
+  schedule:
+    # Lunes a viernes a las 17:00 UTC (18:00/19:00 en Aragón): ya están publicadas las ofertas de las 14:00
+    # y las adjudicaciones de la mañana.
+    - cron: "0 17 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Cuántos días hacia atrás buscar"
+        default: "21"
+
+permissions:
+  contents: read
+
+jobs:
+  semanal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar herramientas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          pip install pypdf
+      - name: Bajar, leer y subir a Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DIAS: ${{ github.event.inputs.dias || '21' }}
+        run: python pipeline/semanal.py --dias "$DIAS" --subir
 
