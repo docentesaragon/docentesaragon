@@ -5,10 +5,12 @@ on:
     # Lunes a viernes a las 17:00 UTC (18:00/19:00 en Aragón): ya están publicadas las ofertas de las 14:00
     # y las adjudicaciones de la mañana.
     - cron: "0 17 * * 1-5"
+    # Los domingos, un repaso más largo (30 días) por si Educaragón publicó algún fichero con retraso.
+    - cron: "0 18 * * 0"
   workflow_dispatch:
     inputs:
       dias:
-        description: "Cuántos días hacia atrás buscar"
+        description: "Cuántos días hacia atrás buscar (a mano: 21 por defecto; cada día laborable se usan 7 y los domingos 30)"
         default: "21"
 
 permissions:
@@ -32,6 +34,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          DIAS: ${{ github.event.inputs.dias || '21' }}
+          DIAS: ${{ github.event.inputs.dias || (github.event.schedule == '0 18 * * 0' && '30' || '7') }}
         run: python pipeline/semanal.py --dias "$DIAS" --subir
-
