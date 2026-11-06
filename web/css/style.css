@@ -54,7 +54,6 @@ button, select, input { font: inherit; color: inherit; }
 .marca-texto { display: grid; }
 .marca-nombre { font: 700 1.6rem/1 var(--f-cifras); }
 .marca-lema { font-size: .875rem; color: var(--tinta-2); }
-.selector-curso[hidden] { display: none; }
 .selector-curso { display: flex; gap: .5rem; align-items: center; font-size: .9rem; color: var(--tinta-2); }
 select, input[type="text"], input[type="search"], input[type="number"], input[type="date"] {
   background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); padding: .45rem .6rem; min-height: 40px; max-width: 100%;
@@ -231,3 +230,5 @@ a.boton { display: inline-flex; align-items: center; text-decoration: none; }
 .grafico .tip { position: absolute; z-index: 3; max-width: 260px; background: var(--panel); color: var(--tinta); border: 1px solid var(--linea); border-radius: var(--radio); box-shadow: 0 6px 18px rgba(0,0,0,.16); padding: .55rem .7rem; font-size: .88rem; line-height: 1.35; pointer-events: none; }
 .grafico .tip[hidden] { display: none; }
 .grafico .tip strong { display: block; margin-bottom: .15rem; }
+
+.aviso-pendiente { background: #fff8e1; border: 1px solid #ecd9a0; border-radius: var(--radio); padding: .55rem .8rem; margin: .5rem 0 0; }

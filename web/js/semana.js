@@ -1,5 +1,5 @@
 // Sección "Semana": hasta dónde llegó la lista en cada especialidad en una adjudicación.
-import { h, llenar, norm, miles, textoClave, bonito } from "./util.js";
+import { h, llenar, norm, miles, textoClave, bonito, fmtLarga } from "./util.js";
 import { D, YO, guardarYo, actosDe, nombreCuerpo } from "./datos.js";
 import { regla, segmento, campoSelect, etiquetaActo, situacion, cabeceraActo, nombreEspBonito, misListas } from "./comun.js";
 
@@ -9,8 +9,11 @@ export function semana(raiz, params = {}) {
   if (params.cuerpo) { YO.cuerpo = params.cuerpo; guardarYo(); }
   const cuerpo = YO.cuerpo;
   const actos = actosDe(D.curso, cuerpo);
-  if (!actos.some((a) => a.acto === estado.actoId)) estado.actoId = (actos.find((a) => a.tiene_candidatos || a.tiene_adjudicadas) || actos[0])?.acto;
+  // Por defecto, la última semana con adjudicación publicada; si hay una oferta más reciente sin adjudicar, se avisa arriba.
+  const ultimaAdjudicada = actos.find((a) => a.tiene_adjudicadas);
+  if (!actos.some((a) => a.acto === estado.actoId)) estado.actoId = (ultimaAdjudicada || actos.find((a) => a.tiene_candidatos) || actos[0])?.acto;
   const acto = D.actoPorId.get(estado.actoId);
+  const pendiente = ultimaAdjudicada && acto === ultimaAdjudicada ? actos.find((a) => a.fecha_oferta > ultimaAdjudicada.fecha_oferta && !a.tiene_adjudicadas) : null;
 
   const redibujar = () => semana(raiz);
   const controles = h("div", { class: "filtros" },
@@ -21,7 +24,10 @@ export function semana(raiz, params = {}) {
       h("input", { type: "search", id: "buscar-esp", value: estado.texto, placeholder: "p. ej. inglés", oninput: (e) => { estado.texto = e.target.value; pintarLista(); } })));
 
   const contLista = h("div", { id: "lista-esp" });
-  llenar(raiz, cabeceraActo(acto), controles, contLista);
+  llenar(raiz, cabeceraActo(acto),
+    pendiente ? h("p", { class: "aviso-pendiente", id: "aviso-pendiente" }, `Ya está publicada la oferta del ${fmtLarga(pendiente.fecha_oferta)}; la adjudicación todavía no. `,
+      h("button", { type: "button", class: "enlace", onclick: () => { estado.actoId = pendiente.acto; redibujar(); } }, "Ver la oferta")) : null,
+    controles, contLista);
 
   function pintarLista() {
     const filas = (D.ultimoPorActo.get(estado.actoId) || []).filter((u) => (u.cuerpo_cod === "0597") === (cuerpo === "maestros"));
@@ -46,7 +52,7 @@ export function semana(raiz, params = {}) {
         cuerpoPrevio = u.cuerpo_cod;
         cajas.push(h("div", { class: "cab-lista", style: "display:block;font-weight:700;color:var(--tinta)" }, bonito(nombreCuerpo(u.cuerpo_cod))));
       }
-      cajas.push(fila(u, nombre));
+      cajas.push(fila(u, nombre, !acto?.tiene_adjudicadas));
     }
     llenar(contLista, 
       h("div", { class: "lista-esp" }, cab, cajas.length ? cajas : h("p", { class: "vacio", style: "padding:1rem" },
@@ -57,11 +63,11 @@ export function semana(raiz, params = {}) {
   pintarLista();
 }
 
-function fila(u, nombre) {
+function fila(u, nombre, pendiente) {
   const mias = misListas().filter((l) => l.cuerpo_cod === u.cuerpo_cod && l.esp === u.esp);
   const sit = mias.length ? situacion(mias[0].clave, u) : null;
   const sinLista = !u.convocados;
-  const plazas = u.vacantes
+  const plazas = pendiente ? (u.vacantes ? `${miles(u.vacantes)} ${u.vacantes === 1 ? "plaza ofertada" : "plazas ofertadas"}` : "—") : u.vacantes
     ? (u.adjudicadas === u.vacantes ? `${miles(u.adjudicadas)} plazas` : `${miles(u.adjudicadas)} de ${miles(u.vacantes)}`)
     : (u.adjudicadas ? `${miles(u.adjudicadas)} plazas` : "—");
   return h("div", { class: "fila-esp" + (mias.length ? " mia" : "") },
@@ -71,6 +77,7 @@ function fila(u, nombre) {
     h("div", { class: "llego" },
       regla(u.relacion_ultimo, u.convocados),
       h("div", { class: "llego-texto" },
+        pendiente ? h("small", null, `Adjudicación pendiente${u.convocados ? ` (${miles(u.convocados)} convocados)` : ""}`) :
         sinLista && u.reconstruido ? h("small", null, "Sin listado de candidatos esta semana: el último llamado se ha calculado con listas de otras semanas")
           : sinLista ? h("small", null, "Sin listado de candidatos publicado esta semana")
           : u.relacion_ultimo ? [`n.º ${miles(u.relacion_ultimo)} `, h("small", null, `de ${miles(u.convocados)} convocados`)]
