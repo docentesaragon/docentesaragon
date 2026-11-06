@@ -47,7 +47,7 @@ button, select, input { font: inherit; color: inherit; }
 .peq { font-size: .875rem; }
 
 /* ---------- cabecera ---------- */
-.cabecera { background: var(--panel); border-bottom: 1px solid var(--linea); border-top: 5px solid var(--rojo); }
+.cabecera { position: sticky; top: 0; z-index: 30; background: var(--panel); border-bottom: 1px solid var(--linea); border-top: 5px solid var(--rojo); }
 .cabecera-in { max-width: 1120px; margin: 0 auto; padding: .9rem 16px .5rem; display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .marca { display: flex; gap: .75rem; align-items: center; text-decoration: none; color: inherit; }
 .logo { width: 38px; height: 38px; flex: none; }
@@ -185,7 +185,8 @@ details.ayuda summary { cursor: pointer; color: var(--pirineo); }
 
 /* ---------- cuenta y pase ---------- */
 .barra-cuenta { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); padding: .6rem 1rem; margin-bottom: 1rem; }
-.barra-cuenta .boton { margin-left: auto; min-height: 34px; padding: .25rem .7rem; }
+.barra-cuenta .boton { min-height: 34px; padding: .25rem .7rem; }
+.acciones-cuenta { margin-left: auto; display: flex; flex-wrap: wrap; gap: .5rem; }
 .beneficios { padding-left: 1.2rem; margin: 0 0 1rem; }
 .beneficios li { margin: .25rem 0; }
 .error-txt { color: var(--rojo); }
@@ -234,3 +235,48 @@ a.boton { display: inline-flex; align-items: center; text-decoration: none; }
 .aviso-pendiente { background: #fff8e1; border: 1px solid #ecd9a0; border-radius: var(--radio); padding: .55rem .8rem; margin: .5rem 0 0; }
 .boton-paddoc { margin-left: auto; display: inline-flex; align-items: center; text-decoration: none; }
 @media (max-width: 560px) { .boton-paddoc { margin-left: 0; flex: 1 1 100%; justify-content: center; } }
+@media (max-width: 560px) { .cabecera-in { padding-top: .5rem; padding-bottom: .25rem; } .marca-lema { display: none; } }
+
+/* ---------- Mi seguimiento v2: buscar mis listas, ajustes, administración ---------- */
+.fila-titulo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.fila-titulo .boton-paddoc { margin-left: 0; }
+textarea { font: inherit; color: var(--tinta); background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); padding: .5rem .6rem; width: 100%; max-width: 40rem; resize: vertical; }
+label.ancho { display: grid; gap: .2rem; font-size: .8rem; color: var(--tinta-2); margin: .5rem 0; }
+details.manual > summary { cursor: pointer; font-family: var(--f-cifras); font-weight: 700; font-size: 1.05rem; }
+details.manual[open] > summary { margin-bottom: .6rem; }
+.buscar input[type="text"] { min-width: min(100%, 22rem); }
+.buscar .encontradas ul { padding-left: 1.1rem; margin: .3rem 0 .8rem; }
+.buscar .encontradas li { margin: .2rem 0; }
+.buscar form.dni { margin: .5rem 0; }
+.boton.peligro { border-color: var(--rojo); color: var(--rojo); }
+.mensajes { list-style: none; padding: 0; margin: .5rem 0 0; display: grid; gap: .6rem; }
+.mensaje, .mensaje-admin { border: 1px solid var(--linea); border-radius: var(--radio); padding: .6rem .8rem; background: var(--panel); margin-top: .6rem; }
+.mensaje p, .mensaje-admin p { margin: .35rem 0; }
+.respuesta { border-left: 3px solid var(--oro); padding-left: .6rem; }
+
+/* lo que solo ve la administradora va en rojo */
+.solo-admin { border-color: var(--rojo); }
+a.boton.solo-admin { color: var(--rojo); }
+.bloque.solo-admin { border-left-width: 4px; }
+
+.aviso-vercomo { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .5rem 1rem; background: var(--rojo); color: #fff; padding: .45rem 16px; font-size: .92rem; }
+.aviso-vercomo .boton { background: #fff; color: #111; border-color: #fff; min-height: 34px; padding: .2rem .8rem; }
+
+.admin-menu { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.admin-menu a.boton[aria-current="page"] { background: var(--tinta); color: var(--panel); border-color: var(--tinta); }
+.cifras { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: .6rem; margin: .6rem 0 1rem; }
+.cifra { background: var(--papel); border: 1px solid var(--linea); border-radius: var(--radio); padding: .5rem .7rem; display: grid; }
+.cifra strong { font: 700 1.5rem var(--f-cifras); line-height: 1.1; }
+.cifra span { font-size: .8rem; color: var(--tinta-2); }
+.tabla-admin td, .tabla-admin th { vertical-align: middle; }
+.tabla-admin tr.sel td { background: var(--oro-fondo); }
+.tabla-admin tr.fila-acciones td { background: var(--papel); }
+.boton.chico { min-height: 32px; padding: .2rem .6rem; font-size: .85rem; }
+.panel-acciones .campos { margin: .5rem 0; align-items: end; }
+.paso-embudo { margin: .8rem 0; }
+.paso-t { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .8rem; }
+.paso-t strong { font: 700 1.3rem var(--f-cifras); }
+.barra-embudo { height: 14px; background: var(--pista); border-radius: 7px; overflow: hidden; margin-top: .25rem; }
+.barra-embudo span { display: block; height: 100%; background: var(--rojo); border-radius: 7px; }
+.pdfs { list-style: none; padding: 0; margin: .4rem 0; }
+.pdfs li { padding: .3rem 0; border-top: 1px solid var(--linea); }

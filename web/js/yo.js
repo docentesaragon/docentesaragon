@@ -1,19 +1,24 @@
 // Sección "Mi seguimiento": tu posición en la lista y tus destinos preferidos.
 // Con Supabase configurado es el área personal de pago (cuenta con correo y contraseña + pase hasta el 30/06); sin él, funciona en local para pruebas.
-import { h, llenar, miles, fmtCorta, fmtDMA, claveDe, textoClave, localidadBonita, centroBonito, bonito } from "./util.js";
+import { h, llenar, miles, fmtCorta, fmtDMA, claveDe, parseClave, textoClave, localidadBonita, centroBonito, bonito } from "./util.js";
 import { D, YO, guardarYo, nombreCuerpo, actosDe } from "./datos.js";
-import { CUENTA, entrarConGoogle, entrarConCorreo, crearCuenta, recuperarContrasena, nuevaContrasena, salir, borrarMisDatos, pagoHecho, TEXTO_SYNC,
-  diasDePrueba, misReferidos, usarCodigo, enlacesInvitar, codigoPendiente } from "./cuenta.js";
+import { CUENTA, entrarConGoogle, entrarConCorreo, crearCuenta, recuperarContrasena, nuevaContrasena, salir, pagoHecho,
+  diasDePrueba, misReferidos, usarCodigo, enlacesInvitar, codigoPendiente, guardarNombre, buscarMisListas, ERRORES_NOMBRE, nombreValido, TEXTO_SYNC } from "./cuenta.js";
 import { productoActual, cursoDeProducto, compraDisponible, precioEnPlay, comprarPase, restaurarCompra } from "./compra.js";
 import { situacion, nombreEspBonito } from "./comun.js";
 import { filtrar } from "./vacantes.js";
 import { ir } from "./ruta.js";
 
+const URL_PADDOC = "https://aplicaciones.aragon.es/epdtp/welcome";     // solicitud de destinos de Educaragón
 const borrador = { cuerpo_cod: "0597", esp: "", lista: "1", fecha: "", bloque: "", orden: "" };
 let confirmandoBorrado = false;
 let verCompra = false;     // true si quien está en prueba (o ya tiene pase) ha pulsado «Activar mi pase»
+let manualAbierto = false; // «Añadir mi posición a mano» desplegado
+let busqueda = null;       // resultado de la última búsqueda por nombre: { estado, listas?, restantes? }
+let buscando = false, editandoNombre = false;
 
-export function yo(raiz) {
+export function yo(raiz, params = {}) {
+  if (params.manual === "1") manualAbierto = true;
   if (!CUENTA.activa) return seguimiento(raiz);               // modo de prueba, sin cuenta
   if (CUENTA.recuperando && CUENTA.estado !== "anonimo") return pantallaEntrada(raiz, "nueva");   // llegó desde el enlace de «he olvidado mi contraseña»
   if (CUENTA.estado === "anonimo") return pantallaEntrada(raiz);
@@ -22,6 +27,7 @@ export function yo(raiz) {
 }
 
 function seguimiento(raiz) {
+  const ro = !!CUENTA.verComo;                                  // el administrador mira la cuenta de otra persona: solo lectura
   const cuerposConDatos = [...new Set(D.ultimo.map((u) => u.cuerpo_cod))].sort();
   if (!cuerposConDatos.includes(borrador.cuerpo_cod)) borrador.cuerpo_cod = cuerposConDatos[0];
   const espDe = (cod) => [...new Set(D.ultimo.filter((u) => u.cuerpo_cod === cod && (u.convocados || u.clave_ultimo)).map((u) => u.esp))]
@@ -31,15 +37,13 @@ function seguimiento(raiz) {
 
   const error = h("p", { class: "error", id: "yo-error", hidden: true, role: "alert" });
   const campo = (etiqueta, el) => h("label", null, etiqueta, el);
-  const formulario = h("form", { class: "bloque", id: "form-lista", onsubmit: (e) => {
+  const formulario = h("form", { id: "form-lista", onsubmit: (e) => {
     e.preventDefault();
     const clave = claveDe({ lista: borrador.lista, fecha: borrador.fecha, bloque: borrador.bloque, orden: borrador.orden });
     if (!clave || !borrador.esp) { error.textContent = "Rellena todos los campos: lista, fecha del bloque, bloque y orden."; error.hidden = false; return; }
-    YO.listas = YO.listas.filter((l) => !(l.cuerpo_cod === borrador.cuerpo_cod && l.esp === borrador.esp));
-    YO.listas.push({ cuerpo_cod: borrador.cuerpo_cod, esp: borrador.esp, lista: +borrador.lista, fecha: borrador.fecha, bloque: +borrador.bloque, orden: +borrador.orden, clave });
+    anadirLista({ cuerpo_cod: borrador.cuerpo_cod, esp: borrador.esp, lista: +borrador.lista, fecha: borrador.fecha, bloque: +borrador.bloque, orden: +borrador.orden, clave });
     guardarYo(); Object.assign(borrador, { fecha: "", bloque: "", orden: "" }); yo(raiz);
   } },
-  h("h3", null, "Añadir mi posición en una lista"),
   h("details", { class: "ayuda" }, h("summary", null, "¿Dónde encuentro estos datos?"),
     h("p", null, "En cualquier PDF «Candidatos por especialidad» de Educaragón, en la fila con tu nombre y la especialidad que quieras seguir: copia las columnas LISTA, FECHA, BLOQUE y ORDEN BLOQUE. No uses la columna RELACIÓN: cambia cada semana. Tu posición real no cambia de una semana a otra, por eso sirve para seguirte.")),
   h("div", { class: "campos" },
@@ -51,20 +55,114 @@ function seguimiento(raiz) {
     campo("Orden en el bloque", h("input", { type: "number", id: "y-orden", min: 1, value: borrador.orden, oninput: (e) => { borrador.orden = e.target.value; } })),
     h("button", { type: "submit", class: "boton", id: "y-anadir" }, "Guardar")),
   error);
+  // Con cuenta, lo normal es la búsqueda por nombre; a mano queda plegado. Sin cuenta (modo de prueba) es la única forma.
+  const manual = h("details", { class: "bloque manual", id: "manual", open: !CUENTA.activa || manualAbierto, ontoggle: (e) => { if (CUENTA.activa) manualAbierto = e.target.open; } },
+    h("summary", null, CUENTA.activa ? "Añadir mi posición en una lista a mano" : "Añadir mi posición en una lista"), formulario);
 
-  const seguimientos = YO.listas.map((l) => bloqueLista(l, raiz));
-  llenar(raiz, 
-    h("div", { class: "cabecera-vista" }, h("h2", null, "Mi seguimiento"),
+  const seguimientos = YO.listas.map((l) => bloqueLista(l, raiz, ro));
+  llenar(raiz,
+    h("div", { class: "cabecera-vista" },
+      h("div", { class: "fila-titulo" }, h("h2", null, "Mi seguimiento"),
+        h("a", { class: "boton boton-paddoc", id: "ir-paddoc-directo", href: URL_PADDOC, target: "_blank", rel: "noopener" }, "Ir a PADDOC")),
       h("p", { class: "tenue" }, CUENTA.activa
-        ? "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que apuntes aquí se guarda en tu cuenta y solo lo ves tú. La web no te pide nombre ni DNI."
-        : "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que escribas aquí se guarda solo en este navegador: no se envía a ningún sitio y la web no te pide nombre ni DNI.")),
+        ? "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que apuntes aquí se guarda en tu cuenta y solo lo ves tú. No guardamos tu DNI."
+        : "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que escribas aquí se guarda solo en este navegador: no se envía a ningún sitio y la web no te pide nombre ni DNI."),
+      h("p", { class: "tenue peq" }, "«Ir a PADDOC» abre en otra pestaña la web oficial de Educaragón donde se hace la solicitud de destinos.")),
     CUENTA.activa ? [mensajeCuenta(), barraCuenta(raiz), avisoDeAcceso(raiz)] : null,
-    h("div", { class: "dos-col" }, h("div", null, formulario, seguimientos.length ? seguimientos : h("p", { class: "vacio" }, "Todavía no has añadido ninguna lista.")), h("div", null, destinos(raiz))),
-    CUENTA.activa ? bloqueInvitar() : null,
-    borrado(raiz));
+    CUENTA.activa && !ro ? bloqueBuscar(raiz) : null,
+    ro ? null : manual,
+    h("div", { class: "dos-col" }, h("div", null, seguimientos.length ? seguimientos : h("p", { class: "vacio", id: "sin-listas" }, "Todavía no has añadido ninguna lista.")), h("div", null, destinos(raiz, ro))),
+    CUENTA.activa ? h("p", { class: "tenue peq", id: "sync-estado", role: "status" }, TEXTO_SYNC[CUENTA.sync] || "") : borrado(raiz));
 }
 
-function bloqueLista(l, raiz) {
+/** Pone (o sustituye) una lista en el seguimiento: una por cuerpo y especialidad. */
+function anadirLista(l) {
+  YO.listas = YO.listas.filter((x) => !(x.cuerpo_cod === l.cuerpo_cod && x.esp === l.esp));
+  YO.listas.push(l);
+}
+
+// ---------- «Mis listas»: nombre en las listas + búsqueda automática ----------
+async function lanzarBusqueda(raiz, nif = "") {
+  buscando = true; yo(raiz);
+  busqueda = await buscarMisListas(nif);
+  buscando = false; yo(raiz);
+}
+
+function bloqueBuscar(raiz) {
+  const perfil = CUENTA.perfil || {};
+  if (!perfil.nombre || editandoNombre) return formularioNombre(raiz, !!perfil.nombre);
+  const quedan = perfil.busquedas_restantes;
+  return h("div", { class: "bloque buscar", id: "buscar" },
+    h("h3", null, "Mis listas"),
+    h("p", null, "Tu nombre en las listas: ", h("strong", { id: "nom-actual" }, perfil.nombre), " ",
+      h("button", { type: "button", class: "enlace", id: "nom-cambiar", onclick: () => { editandoNombre = true; yo(raiz); } }, "Cambiar")),
+    buscando ? h("p", { class: "tenue", id: "busq-ocupado", role: "status" }, "Buscando en las listas…") : resultadoBusqueda(raiz),
+    buscando ? null : h("div", { class: "campos" },
+      h("button", { type: "button", class: "boton " + (YO.listas.length || busqueda ? "sec" : ""), id: "buscar-listas", disabled: quedan === 0, onclick: () => lanzarBusqueda(raiz) },
+        YO.listas.length ? "Buscar mis listas de nuevo" : "Buscar mis listas"),
+      h("span", { class: "tenue peq", id: "busq-quedan" }, quedan == null ? "" : quedan === 0 ? "Hoy ya no te quedan búsquedas." : `Te quedan ${quedan} ${quedan === 1 ? "búsqueda" : "búsquedas"} hoy.`)));
+}
+
+function formularioNombre(raiz, cambiando) {
+  const perfil = CUENTA.perfil || {};
+  const error = h("p", { class: "error-txt", id: "nom-error", role: "alert", hidden: true });
+  const entrada = h("input", { type: "text", id: "nom-in", maxlength: 120, autocomplete: "off", placeholder: "GARCÍA LÓPEZ, MARÍA", value: cambiando ? perfil.nombre : "" });
+  return h("form", { class: "bloque buscar", id: "form-nombre", novalidate: true, onsubmit: async (e) => {
+    e.preventDefault();
+    if (!nombreValido(entrada.value)) { error.textContent = ERRORES_NOMBRE.invalido; error.hidden = false; return; }
+    e.target.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    const estado = await guardarNombre(entrada.value);
+    if (estado !== "ok") { e.target.querySelectorAll("button").forEach((b) => { b.disabled = false; }); error.textContent = ERRORES_NOMBRE[estado] || ERRORES_NOMBRE.error; error.hidden = false; return; }
+    editandoNombre = false; busqueda = null;
+    await lanzarBusqueda(raiz);
+  } },
+  h("h3", null, cambiando ? "Cambiar mi nombre en las listas" : "Encuentra tus listas automáticamente"),
+  h("p", { class: "tenue" }, "Escribe tu nombre como sale en los listados de Educaragón (apellidos y nombre) y buscamos en qué listas y especialidades estás."),
+  h("label", null, "Mi nombre en las listas", entrada),
+  h("div", { class: "campos" },
+    h("button", { type: "submit", class: "boton", id: "nom-guardar" }, "Guardar y buscar mis listas"),
+    cambiando ? h("button", { type: "button", class: "boton sec", id: "nom-cancelar", onclick: () => { editandoNombre = false; yo(raiz); } }, "Cancelar") : null),
+  h("p", { class: "tenue peq" }, "Solo lo usa tu cuenta para esta búsqueda y la administración puede verlo para ayudarte. En los listados solo salen las personas a las que ya se ha llamado alguna vez este curso; si aún no sales, añade tu posición a mano más abajo.",
+    cambiando && perfil.cambios_restantes != null ? ` Puedes cambiarlo ${perfil.cambios_restantes === 1 ? "1 vez más" : `${perfil.cambios_restantes} veces más`}.` : ""),
+  error);
+}
+
+function formularioDni(raiz, texto) {
+  const entrada = h("input", { type: "text", id: "busq-dni", maxlength: 12, inputmode: "numeric", autocomplete: "off", placeholder: "1285" });
+  return h("form", { class: "dni", id: "busq-dni-form", onsubmit: (e) => { e.preventDefault(); const v = entrada.value.trim(); if (v.length >= 3) lanzarBusqueda(raiz, v); } },
+    h("p", null, texto),
+    h("div", { class: "campos" }, h("label", null, "Cifras de tu DNI que salen en las listas", entrada), h("button", { type: "submit", class: "boton", id: "busq-dni-go" }, "Buscar con mi DNI")),
+    h("p", { class: "tenue peq" }, "En los listados el DNI sale tapado (por ejemplo ***1285**); escribe las cifras que se ven. No las guardamos."));
+}
+
+function resultadoBusqueda(raiz) {
+  const b = busqueda;
+  if (!b) return null;
+  const aviso = (texto, id) => h("p", { class: "tenue", id, role: "status" }, texto);
+  if (b.estado === "ok") {
+    const n = b.listas.length;
+    return h("div", { class: "encontradas", id: "busq-ok" },
+      h("p", null, n === 1 ? "Hemos encontrado 1 lista con tu nombre:" : `Hemos encontrado ${n} listas con tu nombre:`),
+      h("ul", null, b.listas.map((l) => h("li", null, h("strong", null, `${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`), ` (${bonito(nombreCuerpo(l.cuerpo_cod))}) · ${textoClave(l.clave)}`))),
+      h("div", { class: "campos" },
+        h("button", { type: "button", class: "boton", id: "busq-anadir", onclick: () => {
+          for (const l of b.listas) { const p = parseClave(l.clave); if (p) anadirLista({ cuerpo_cod: l.cuerpo_cod, esp: l.esp, lista: p.lista, fecha: p.fecha, bloque: p.bloque, orden: p.orden, clave: l.clave }); }
+          guardarYo(); busqueda = { estado: "anadidas", n }; yo(raiz);
+        } }, n === 1 ? "Añadir a mi seguimiento" : "Añadir todas a mi seguimiento"),
+        h("button", { type: "button", class: "boton sec", id: "busq-no", onclick: () => { busqueda = { estado: "no_soy" }; yo(raiz); } }, "No soy yo")));
+  }
+  if (b.estado === "anadidas") return aviso(`Hecho: has añadido ${b.n === 1 ? "1 lista" : b.n + " listas"}. Debajo ves cómo va cada una semana a semana.`, "busq-hecho");
+  if (b.estado === "varios") return formularioDni(raiz, "Hay varias personas con tu mismo nombre en las listas. Para saber cuál eres, escribe las cifras de tu DNI que salen en los listados.");
+  if (b.estado === "no_soy") return formularioDni(raiz, "Puede haber otra persona con tu mismo nombre. Escribe las cifras de tu DNI que salen en los listados para encontrar las tuyas.");
+  if (b.estado === "no_encontrado") return aviso(b.con_dni
+    ? "No hay nadie con ese nombre y esas cifras del DNI. Revísalas, cambia el nombre o añade tu posición a mano."
+    : "No te hemos encontrado entre las personas convocadas este curso. En los listados semanales solo salen las personas a las que ya se ha llamado alguna vez, así que puede que aún no aparezcas. Comprueba que has escrito el nombre como sale en ellos, o añade tu posición a mano.", "busq-nada");
+  if (b.estado === "limite") return aviso("Has usado las 5 búsquedas de hoy. Vuelve mañana o añade tu posición a mano.", "busq-limite");
+  if (b.estado === "sin_pase") return aviso("Necesitas un pase en vigor para buscar tus listas.", "busq-sinpase");
+  return aviso("No se pudo buscar ahora mismo. Inténtalo de nuevo en unos minutos.", "busq-error");
+}
+
+function bloqueLista(l, raiz, ro = false) {
   const actos = actosDe(D.curso, l.cuerpo_cod === "0597" ? "maestros" : "secundaria").sort((a, b) => (a.fecha_oferta < b.fecha_oferta ? 1 : -1));
   const filas = actos.map((a) => ({ a, u: (D.ultimoPorActo.get(a.acto) || []).find((x) => x.cuerpo_cod === l.cuerpo_cod && x.esp === l.esp && (x.convocados || x.clave_ultimo)) })).filter((x) => x.u);
   const sits = filas.map((x) => ({ ...x, sit: situacion(l.clave, x.u) }));
@@ -76,7 +174,7 @@ function bloqueLista(l, raiz) {
   return h("div", { class: "bloque", "data-lista": `${l.cuerpo_cod}|${l.esp}` },
     h("div", { class: "campos", style: "justify-content:space-between;align-items:start;margin-top:0" },
       h("div", null, h("h3", null, `${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`), h("p", { class: "tenue peq", style: "margin:0" }, `Tu posición: ${textoClave(l.clave)}`)),
-      h("button", { type: "button", class: "boton sec", onclick: () => { YO.listas = YO.listas.filter((x) => x !== l); guardarYo(); yo(raiz); } }, "Quitar")),
+      ro ? null : h("button", { type: "button", class: "boton sec", onclick: () => { YO.listas = YO.listas.filter((x) => x !== l); guardarYo(); yo(raiz); } }, "Quitar")),
     h("p", { class: "resumen-frase situacion" }, resumen),
     sits.length ? h("div", { class: "tabla-wrap" }, h("table", { class: "datos" },
       h("thead", null, h("tr", null, h("th", null, "Oferta"), h("th", { class: "num" }, "Último llamado"), h("th", null, "Tu situación"))),
@@ -89,7 +187,7 @@ function bloqueLista(l, raiz) {
     h("p", { class: "tenue peq" }, "Orientativo: depende de quién estuviera disponible cada semana y de las vacantes que hubiera en las provincias que tú pidieras."));
 }
 
-function destinos(raiz) {
+function destinos(raiz, ro = false) {
   const locs = Object.values(D.locs).map((x) => x.localidad).sort((a, b) => a.localeCompare(b, "es"));
   const entrada = h("input", { type: "text", id: "d-loc", list: "d-lista", placeholder: "Escribe una localidad" });
   const anadir = () => {
@@ -101,10 +199,10 @@ function destinos(raiz) {
   return h("div", { class: "bloque", id: "destinos" },
     h("h3", null, "Mis destinos preferidos"),
     h("p", { class: "tenue peq" }, "Se resaltan en la tabla de vacantes y puedes filtrar por ellos."),
-    h("div", { class: "campos" }, h("label", null, "Añadir localidad", entrada), h("datalist", { id: "d-lista" }, locs.map((l) => h("option", { value: localidadBonita(l) }))),
+    ro ? null : h("div", { class: "campos" }, h("label", null, "Añadir localidad", entrada), h("datalist", { id: "d-lista" }, locs.map((l) => h("option", { value: localidadBonita(l) }))),
       h("button", { type: "button", class: "boton", id: "d-anadir", onclick: anadir }, "Añadir")),
     h("div", { class: "etiquetas" }, YO.destinos.length ? YO.destinos.map((l) => h("span", { class: "chip oro" }, localidadBonita(l),
-      h("button", { type: "button", "aria-label": `Quitar ${localidadBonita(l)}`, onclick: () => { YO.destinos = YO.destinos.filter((x) => x !== l); guardarYo(); yo(raiz); } }, "×"))) : h("span", { class: "tenue peq" }, "Aún no has elegido ninguno. También puedes añadirlos desde el mapa.")),
+      ro ? null : h("button", { type: "button", "aria-label": `Quitar ${localidadBonita(l)}`, onclick: () => { YO.destinos = YO.destinos.filter((x) => x !== l); guardarYo(); yo(raiz); } }, "×"))) : h("span", { class: "tenue peq" }, ro ? "No ha elegido ninguno." : "Aún no has elegido ninguno. También puedes añadirlos desde el mapa.")),
     YO.destinos.length ? [
       h("h3", { style: "margin-top:1rem" }, "Última semana en tus destinos"),
       recientes.length ? h("ul", { style: "padding-left:1.1rem" }, recientes.slice(0, 10).map((v) => h("li", null,
@@ -113,29 +211,15 @@ function destinos(raiz) {
       h("button", { type: "button", class: "boton sec", onclick: () => ir("vacantes", { mis: "1", cuerpo: "todos", semana: "todo" }) }, "Ver todas en el curso")] : null);
 }
 
-let confirmandoCuenta = false;
+/** Solo en el modo de prueba (sin cuenta): los datos viven en este navegador. Con cuenta, borrar datos está en Ajustes. */
 function borrado(raiz) {
-  const sync = h("span", { id: "sync-estado", class: "peq tenue", role: "status" }, TEXTO_SYNC[CUENTA.sync] || "");
   const borrarTodo = confirmandoBorrado
     ? h("div", { class: "campos" }, h("span", null, "¿Borrar todo lo guardado?"),
       h("button", { type: "button", class: "boton", id: "borrar-si", onclick: () => { YO.listas = []; YO.destinos = []; guardarYo(); confirmandoBorrado = false; yo(raiz); } }, "Sí, borrar"),
       h("button", { type: "button", class: "boton sec", onclick: () => { confirmandoBorrado = false; yo(raiz); } }, "Cancelar"))
-    : h("button", { type: "button", class: "boton sec", id: "borrar", onclick: () => { confirmandoBorrado = true; yo(raiz); } }, CUENTA.activa ? "Borrar mi seguimiento" : "Borrar mis datos");
-  if (!CUENTA.activa) {
-    return h("div", { class: "bloque" }, h("h3", null, "Mis datos"),
-      h("p", { class: "tenue peq" }, "Tu posición y tus destinos viven en el almacenamiento de este navegador. Si borras los datos del navegador, desaparecen."), borrarTodo);
-  }
-  const cuenta = confirmandoCuenta
-    ? h("div", { class: "campos" }, h("span", null, "Se borrarán tu pase, tu prueba, tu código de invitación y tu seguimiento de Docentes Aragón. No se puede deshacer. Si el pago sigue vigente en Google Play, «Restaurar compra» recupera el pase."),
-      h("button", { type: "button", class: "boton", id: "cuenta-borrar-si", onclick: async () => {
-        try { await borrarMisDatos(); } catch (e) { CUENTA.mensaje = e.message; }
-        confirmandoCuenta = false; yo(raiz);
-      } }, "Sí, borrar mis datos"),
-      h("button", { type: "button", class: "boton sec", onclick: () => { confirmandoCuenta = false; yo(raiz); } }, "Cancelar"))
-    : h("button", { type: "button", class: "boton sec", id: "cuenta-borrar", onclick: () => { confirmandoCuenta = true; yo(raiz); } }, "Borrar mi pase y mis datos");
+    : h("button", { type: "button", class: "boton sec", id: "borrar", onclick: () => { confirmandoBorrado = true; yo(raiz); } }, "Borrar mis datos");
   return h("div", { class: "bloque" }, h("h3", null, "Mis datos"),
-    h("p", { class: "tenue peq" }, "Tu posición y tus destinos se guardan en tu cuenta, no en este navegador. ", sync),
-    h("div", { class: "campos" }, borrarTodo, cuenta));
+    h("p", { class: "tenue peq" }, "Tu posición y tus destinos viven en el almacenamiento de este navegador. Si borras los datos del navegador, desaparecen."), borrarTodo);
 }
 
 // ---------- cuenta y pase ----------
@@ -143,11 +227,15 @@ function barraCuenta(raiz) {
   return h("div", { class: "barra-cuenta" },
     h("span", null, "Sesión de ", h("strong", { id: "cuenta-email" }, CUENTA.email || "tu cuenta")),
     CUENTA.pase ? h("span", { class: "chip oro", id: "pase-activo" }, textoPase()) : null,
-    h("button", { type: "button", class: "boton sec", id: "salir", onclick: async () => { await salir(); yo(raiz); } }, "Cerrar sesión"));
+    h("div", { class: "acciones-cuenta" },
+      h("a", { class: "boton sec", id: "ir-ajustes", href: "#/ajustes" }, "Ajustes"),
+      CUENTA.admin ? h("a", { class: "boton sec", id: "ir-admin", href: "#/admin" }, "Administración") : null,
+      h("button", { type: "button", class: "boton sec", id: "salir", onclick: async () => { await salir(); yo(raiz); } }, "Cerrar sesión")));
 }
 
-function textoPase() {
+export function textoPase() {
   const p = CUENTA.pase;
+  if (p.tipo === "admin") return "Administración";
   if (p.tipo === "prueba") { const n = diasDePrueba(); return `Prueba gratuita: ${n === 1 ? "1 día" : n + " días"}`; }
   if (p.tipo === "invitaciones") return `App gratis hasta el ${fmtDMA(p.expira)}`;
   return `Pase activo hasta el ${fmtDMA(p.expira)}`;
@@ -172,7 +260,7 @@ function avisoDeAcceso(raiz) {
 }
 
 // ---------- invitar: «Invita y consigue la app gratis» ----------
-function bloqueInvitar() {
+export function bloqueInvitar() {
   const caja = h("div", { class: "bloque invitar", id: "invitar" }, h("h3", null, "Invita y consigue la app gratis"), h("p", { class: "tenue", id: "ref-carga" }, "Cargando…"));
   misReferidos().then((d) => {
     if (!d) { caja.querySelector("#ref-carga").textContent = "No disponible en este momento."; return; }
@@ -241,18 +329,20 @@ function formularioAcceso(raiz, modo) {
   const pass = h("input", { type: "password", id: "au-pass", autocomplete: modo === "login" ? "current-password" : "new-password" });
   const acepto = h("input", { type: "checkbox", id: "au-ok" });
   const codigo = h("input", { type: "text", id: "au-ref", maxlength: 16, placeholder: "ARA-XXXXX", autocomplete: "off", value: codigoPendiente() });
+  const nombre = h("input", { type: "text", id: "au-nombre", maxlength: 120, placeholder: "GARCÍA LÓPEZ, MARÍA", autocomplete: "off" });
   const ir = async (e) => {
     e.preventDefault();
     const correo = mail.value.trim(), clave = pass.value;
     if (modo !== "nueva" && !/^\S+@\S+\.\S+$/.test(correo)) return mostrar("Escribe un correo válido.", true);
     if (modo !== "olvido" && clave.length < 8) return mostrar("La contraseña debe tener al menos 8 caracteres.", true);
+    if (modo === "registro" && nombre.value.trim() && !nombreValido(nombre.value)) return mostrar(ERRORES_NOMBRE.invalido, true);
     if (modo === "registro" && !acepto.checked) return mostrar("Para crear la cuenta debes aceptar la política de privacidad y las condiciones.", true);
     mostrar("Un momento…");
     const botones = raiz.querySelectorAll("button"); botones.forEach((b) => { b.disabled = true; });
     let r;
     try {
       if (modo === "login") r = await entrarConCorreo(correo, clave);
-      else if (modo === "registro") r = await crearCuenta(correo, clave, codigo.value);
+      else if (modo === "registro") r = await crearCuenta(correo, clave, codigo.value, nombre.value);
       else if (modo === "olvido") r = await recuperarContrasena(correo);
       else r = await nuevaContrasena(clave);
     } catch (err) { r = { ok: false, mensaje: "Ha ocurrido un error. Inténtalo de nuevo." }; }
@@ -272,6 +362,8 @@ function formularioAcceso(raiz, modo) {
     h("h3", { id: "au-title" }, titulo),
     modo !== "nueva" ? h("label", null, "Correo electrónico", mail) : null,
     modo !== "olvido" ? h("label", null, modo === "nueva" ? "Nueva contraseña (mínimo 8 caracteres)" : modo === "registro" ? "Contraseña (mínimo 8 caracteres)" : "Contraseña", pass) : null,
+    modo === "registro" ? h("label", null, "Tu nombre como sale en las listas (opcional)", nombre) : null,
+    modo === "registro" ? h("p", { class: "tenue peq", id: "au-nombre-ayuda" }, "Sirve para encontrar tus listas y especialidades sin que tengas que buscarlas. Solo lo usa tu cuenta; no se enseña a nadie.") : null,
     modo === "registro" ? h("label", null, "Código de invitación (opcional)", codigo) : null,
     modo === "registro" ? h("label", { class: "check" }, acepto, h("span", null, "He leído la ", h("a", { href: "privacidad.html", target: "_blank", rel: "noopener" }, "política de privacidad y las condiciones"), " y las acepto.")) : null,
     h("div", { class: "campos" },
@@ -302,7 +394,7 @@ function pantallaEntrada(raiz, modo = modoAcceso) {
         h("li", null, "Tus datos en tu cuenta: los ves igual en el móvil y en el ordenador."),
         h("li", null, "Avisos desde la app: próximamente.")),
       h("p", null, "Pase del curso ", info ? info.curso : "", ": ", precioTexto(prod), info ? ` hasta el ${info.hasta}. Pago único, no se renueva solo.` : "."),
-      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, y lo que apuntes aquí. Nunca te pedimos DNI ni tu nombre en las listas. Puedes borrar tu pase y tus datos cuando quieras.")),
+      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, lo que apuntes aquí y, si quieres, tu nombre tal como sale en las listas. Nunca guardamos tu DNI (si hay otra persona con tu mismo nombre, para buscar te pedimos las cifras que ya salen tapadas en los listados, y no se guardan). Puedes borrar todos tus datos de Aragón cuando quieras.")),
     formularioAcceso(raiz, modo));
 }
 

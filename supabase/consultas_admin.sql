@@ -1,8 +1,10 @@
 -- =====================================================================
 --  Docentes Aragón · consultas para ti (administrador)
 --  Cómo se usan: Supabase > SQL Editor > New query > pega SOLO UN bloque (los separa una línea de «=====») > Run.
---  Los bloques 1 a 5, 10 y 11 solo MIRAN datos: se pueden ejecutar sin miedo.
---  Los bloques 6 a 9 CAMBIAN datos: cambia el correo de ejemplo (correo@ejemplo.com) por el de la persona antes de ejecutarlos.
+--  Los bloques 1 a 5, 10, 11, 12 y 14 solo MIRAN datos: se pueden ejecutar sin miedo.
+--  Los bloques 6 a 9, 13 y 15 CAMBIAN datos: cambia el correo de ejemplo (correo@ejemplo.com) por el de la persona antes de ejecutarlos.
+--  La mayoría de estas cosas (usuarios, pagos, embudo, mensajes, regalar pase, ver como otra persona, subir PDF) ya las tienes
+--  dentro de la propia web, en Mi seguimiento > Administración. Este archivo queda como plan B.
 --  Aquí verás correos de personas: son datos personales, no los compartas ni los pegues en sitios públicos.
 -- =====================================================================
 
@@ -109,3 +111,40 @@ where tipo in ('suscripcion', 'pago_unico') and estado = 'activo' and curso = ar
 select pg_size_pretty(pg_database_size(current_database())) as total_del_proyecto,
        (select pg_size_pretty(sum(pg_total_relation_size(c.oid))) from pg_class c join pg_namespace n on n.oid = c.relnamespace
          where n.nspname = 'aragon' and c.relkind = 'r') as solo_docentes_aragon;
+
+
+-- =====================================================================
+-- 12. Qué ha hecho el administrador sobre cuentas de otras personas (ver como, regalos, correcciones de nombre...)
+-- =====================================================================
+select l.momento, a.email as administrador, l.accion, u.email as sobre_la_cuenta, l.detalle
+from aragon.admin_log l
+left join auth.users a on a.id = l.admin
+left join auth.users u on u.id = l.user_id
+order by l.momento desc
+limit 100;
+
+
+-- =====================================================================
+-- 13. Añadir o quitar a otra persona administradora (escribe su correo en minúsculas y que lo tenga confirmado)
+-- =====================================================================
+insert into aragon.admins (email) values ('correo@ejemplo.com') on conflict do nothing;
+-- delete from aragon.admins where email = 'correo@ejemplo.com';   -- (quita el «--» del principio para quitarla)
+
+
+-- =====================================================================
+-- 14. Cuánta gente tiene nombre guardado y cuántos candidatos hay cargados para buscar (sin enseñar nombres)
+-- =====================================================================
+select (select count(*) from aragon.cuentas where nombre is not null) as cuentas_con_nombre,
+       (select count(*) from aragon.personas) as filas_de_candidatos,
+       (select count(distinct clave || nif) from aragon.personas) as personas_distintas,
+       (select max(visto) from aragon.personas) as ultima_carga;
+
+
+-- =====================================================================
+-- 15. QUITAR a una persona de la búsqueda por nombre (a petición suya). Escribe su nombre como sale en los listados.
+--     Con el DNI parcial vacío ('') se excluye a todas las personas con ese nombre; con las cifras visibles (p. ej. '***1285**') solo a esa.
+--     Se borra ya y el robot no la vuelve a cargar aunque siga saliendo en los PDF de Educaragón.
+-- =====================================================================
+insert into aragon.personas_excluidas (clave, nif) values (aragon.clave_nombre('APELLIDOS, NOMBRE'), '') on conflict do nothing;
+delete from aragon.personas p using aragon.personas_excluidas x where p.clave = x.clave and (x.nif = '' or x.nif = p.nif);
+-- Para volver a incluirla:  delete from aragon.personas_excluidas where clave = aragon.clave_nombre('APELLIDOS, NOMBRE');

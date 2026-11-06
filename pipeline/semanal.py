@@ -7,6 +7,10 @@
 
 Requisitos: Python 3.9+, pypdf (pip install pypdf) y pdftotext/pdfinfo de Poppler.
 Los PDF (con nombres de personas) se guardan en una carpeta temporal y NO se suben a ningún sitio.
+Con --subir, además:
+  · lee los PDF que el administrador haya subido desde la web (bucket privado «aragon-pdf») y los borra al terminar;
+  · guarda en una tabla PRIVADA de Supabase los candidatos del curso (nombre normalizado y puesto en la lista), para que cada
+    persona pueda encontrar sus listas escribiendo su nombre. Esa tabla no la puede leer la web.
 """
 import argparse
 import datetime as dt
@@ -15,6 +19,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import subidos  # noqa: E402
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,26 +46,32 @@ def main():
     salida = a.salida or os.path.join(tmp, "json")
     os.makedirs(salida, exist_ok=True)
 
+    subidos_admin = []
     if not a.pdfs:
         desde = (dt.date.today() - dt.timedelta(days=a.dias)).isoformat()
         # el robot sale con codigo 1 si alguna pagina falla; lo importante es si llego algun PDF
         ejecutar([os.path.join(AQUI, "descargar_educaragon.py"), "--salida", pdfs, "--desde", desde])
+        if a.subir:
+            subidos_admin = subidos.bajar(pdfs)
     n = sum(f.lower().endswith(".pdf") for _, _, fs in os.walk(pdfs) for f in fs) if os.path.isdir(pdfs) else 0
     print(f"PDF disponibles: {n}")
     if n == 0:
         sys.exit("No se ha descargado ningun PDF (Educaragon no responde o ha cambiado las paginas). Nada que procesar.")
 
-    r = ejecutar([os.path.join(AQUI, "procesar.py"), pdfs, "--salida", salida, "--desde", ""])
+    personas = os.path.join(tmp, "privado", "personas.json")     # NUNCA dentro de web/: lleva nombres
+    r = ejecutar([os.path.join(AQUI, "procesar.py"), pdfs, "--salida", salida, "--desde", ""] + (["--personas", personas] if a.subir else []))
     if r.returncode:
         sys.exit("Fallo al leer los PDF.")
     if a.subir:
-        r = ejecutar([os.path.join(AQUI, "cargar_supabase.py"), salida])
+        r = ejecutar([os.path.join(AQUI, "cargar_supabase.py"), salida] + (["--personas", personas] if os.path.exists(personas) else []))
         if r.returncode:
             sys.exit("Fallo al subir a Supabase.")
+        subidos.borrar(subidos_admin)     # ya procesados: fuera del bucket
     else:
         print("JSON en", salida, "(usa --subir para enviarlos a Supabase)")
     if not a.pdfs:
         shutil.rmtree(pdfs, ignore_errors=True)   # no dejar nombres de personas en disco
+    shutil.rmtree(os.path.dirname(personas), ignore_errors=True)
     print("Terminado.")
 
 

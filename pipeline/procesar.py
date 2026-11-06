@@ -8,7 +8,11 @@ Lo que sale (todo sin nombres ni DNI):
     actos.json, especialidades.json, localidades.json, vacantes.json, ultimo_llamado.json, meta.json
 
 Los nombres y NIF solo se usan en memoria para cruzar "quien fue adjudicado" con "su puesto en la
-lista" (clave de orden). Nunca se escriben en los ficheros de salida.
+lista" (clave de orden). Nunca se escriben en los ficheros de salida PUBLICOS.
+
+Unica excepcion, solo si se pide con --personas FICHERO: los candidatos del curso (nombre, DNI parcial y puesto en
+cada lista) para la busqueda privada «Mi nombre en las listas». Ese fichero NO es publico: va a una tabla de
+Supabase que la web no puede leer, y el programa se niega a escribirlo dentro de la carpeta web/.
 
 Clave de orden de la lista (estable entre semanas, comprobado con los datos de 2026):
     lista (1/2) + fecha del bloque + bloque + orden dentro del bloque
@@ -87,7 +91,10 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--desde-validar", default="2026-08-01", help="con --validar: solo semanas desde esta fecha")
     ap.add_argument("--validar", action="store_true", help="prueba de la reconstruccion del ultimo llamado (no genera ficheros)")
+    ap.add_argument("--personas", help="ademas, escribe aqui (JSON PRIVADO, nunca dentro de web/) los candidatos para la busqueda por nombre")
     a = ap.parse_args()
+    if a.personas and "/web/" in os.path.abspath(a.personas).replace("\\", "/").lower() + "/":
+        sys.exit("--personas contiene nombres de personas: no se puede guardar dentro de la carpeta web/ (se publica en internet).")
     os.makedirs(a.salida, exist_ok=True)
     t0 = time.time()
 
@@ -132,6 +139,10 @@ def main():
             k = clave(r["lista"], f"{f[6:]}-{f[3:5]}-{f[:2]}", r["bloque"], r["orden_bloque"])
             historial[(r["nif"], r["nombre"])][(r["cuerpo_cod"], r["especialidad_cod"])] = k
             historial_por_acto[acto_h][(r["nif"], r["nombre"])][(r["cuerpo_cod"], r["especialidad_cod"])] = k
+
+    if a.personas:
+        n_personas = escribir_personas(a.personas, mejor)
+        print(f"personas (privado): {n_personas} filas en {a.personas}")
 
     def reconstruir(v_act_, excluir=None):
         """Ultimo llamado por lista usando solo el historial de otras semanas."""
@@ -330,6 +341,25 @@ def main():
             "ultimo_acto": max((x["fecha_oferta"] for x in actos), default=None)}
     json.dump(meta, open(os.path.join(a.salida, "meta.json"), "w"), indent=1)
     print(meta, "en %.0fs" % (time.time() - t0))
+
+
+def escribir_personas(ruta, mejor):
+    """Candidatos de los listados: una fila por persona y especialidad con su puesto en la lista (estable entre semanas)."""
+    filas = {}
+    for (tipo, _acto, _), d in sorted(mejor.items(), key=lambda kv: kv[1]["cab"]["fecha"] or ""):
+        if tipo != "candidatos" or not d["cab"]["fecha"]:
+            continue
+        curso = curso_de(d["cab"]["fecha"])
+        for r in d["filas"]:
+            f = r["fecha"]
+            filas[(curso, r["nif"], r["nombre"], r["cuerpo_cod"], r["especialidad_cod"])] = clave(
+                r["lista"], f"{f[6:]}-{f[3:5]}-{f[:2]}", r["bloque"], r["orden_bloque"])
+    salida = [{"curso": c, "nombre": n, "nif": nif, "cuerpo_cod": cu, "esp": e, "clave": k}
+              for (c, nif, n, cu, e), k in sorted(filas.items())]
+    os.makedirs(os.path.dirname(os.path.abspath(ruta)), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as fh:
+        json.dump(salida, fh, ensure_ascii=False, separators=(",", ":"))
+    return len(salida)
 
 
 def _iso(dmy):

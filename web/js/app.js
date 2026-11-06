@@ -7,18 +7,32 @@ import { historico } from "./historico.js";
 import { vacantes } from "./vacantes.js";
 import { mapa } from "./mapa.js";
 import { yo } from "./yo.js";
-import { iniciarCuenta } from "./cuenta.js";
+import { ajustes } from "./ajustes.js";
+import { admin } from "./admin.js";
+import { iniciarCuenta, CUENTA, salirVerComo } from "./cuenta.js";
 
-const VISTAS = { semana, historico, vacantes, mapa, yo };
+const VISTAS = { semana, historico, vacantes, mapa, yo, ajustes, admin };
 const NECESITA_VACANTES = new Set(["vacantes", "mapa", "yo"]);
+const PESTANA = { ajustes: "yo", admin: "yo" };      // estas dos cuelgan de «Mi seguimiento»
 const raiz = document.getElementById("vista");
+
+/** Barra de arriba mientras la administradora mira la web como otra persona (solo lectura). */
+function avisoVerComo() {
+  const el = document.getElementById("aviso-vercomo");
+  if (!CUENTA.verComo) { el.hidden = true; el.replaceChildren(); return; }
+  llenar(el,
+    h("span", null, "Estás viendo la web como ", h("strong", { id: "vercomo-quien" }, CUENTA.verComo.email), CUENTA.verComo.nombre ? ` (${CUENTA.verComo.nombre})` : "", ". Solo lectura: no se guarda nada."),
+    h("button", { type: "button", class: "boton", id: "vercomo-salir", onclick: () => { salirVerComo(); location.hash = "#/admin?seccion=usuarios"; window.dispatchEvent(new Event("hashchange")); } }, "Volver a mi cuenta"));
+  el.hidden = false;
+}
 
 async function pintar() {
   const { vista, params } = leerRuta();
   const nombre = VISTAS[vista] ? vista : "semana";
   document.querySelectorAll(".pestanas a").forEach((a) => {
-    if (a.dataset.vista === nombre) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    if (a.dataset.vista === (PESTANA[nombre] || nombre)) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  avisoVerComo();
   try {
     if (NECESITA_VACANTES.has(nombre) && D.vacantes._curso !== D.curso) {
       llenar(raiz, h("p", { class: "cargando" }, "Cargando vacantes…"));

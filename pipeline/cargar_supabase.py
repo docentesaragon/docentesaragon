@@ -7,6 +7,7 @@
     # opcional: export SUPABASE_SCHEMA="aragon"   (es el valor por defecto)
 
     python3 cargar_supabase.py --keepalive      # solo "toca" la tabla keepalive
+    python3 cargar_supabase.py --solo-personas FICHERO   # solo los candidatos privados (ver procesar.py --personas)
 
 Es idempotente: se puede ejecutar mil veces; las filas existentes se actualizan (upsert).
 """
@@ -81,6 +82,25 @@ def upsert(base, clave, tabla, filas, dry=False, solo_nuevas=False):
     print(f"  {tabla}: {len(filas)} filas {'nuevas (las existentes no se tocan)' if solo_nuevas else 'subidas'}")
 
 
+def cargar_personas(base, clave, ruta, dry=False):
+    """Sube los candidatos del curso a la tabla PRIVADA aragon.personas (por la funcion cargar_personas, que guarda el nombre
+    ya normalizado y descarta el original). Es un upsert: se puede repetir."""
+    filas = json.load(open(ruta, encoding="utf-8"))
+    por_curso = {}
+    for f in filas:
+        por_curso.setdefault(f["curso"], []).append({k: f[k] for k in ("nombre", "nif", "cuerpo_cod", "esp", "clave")})
+    for curso in sorted(por_curso):
+        lista = por_curso[curso]
+        if dry:
+            print(f"  [simulacro] personas {curso}: {len(lista)} filas")
+            continue
+        total = 0
+        for i in range(0, len(lista), 1000):
+            _, cuerpo = peticion(f"{base}/rest/v1/rpc/cargar_personas", clave, "POST", {"p_curso": curso, "p_filas": lista[i:i + 1000]})
+            total += int(json.loads(cuerpo or "0"))
+        print(f"  personas {curso}: {len(lista)} filas enviadas, {total} guardadas")
+
+
 def leer_existentes(base, clave, tabla, actos):
     """Filas que ya hay en Supabase para esos actos (para no pisarlas con datos peores)."""
     out = []
@@ -119,6 +139,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keepalive", action="store_true")
     ap.add_argument("--forzar", action="store_true", help="sobrescribe siempre, aunque los datos nuevos sean peores que los guardados")
+    ap.add_argument("--personas", help="ademas, sube los candidatos privados de este fichero (lo escribe procesar.py --personas)")
+    ap.add_argument("--solo-personas", help="solo sube los candidatos privados de este fichero y termina")
     a = ap.parse_args()
 
     base = os.environ.get("SUPABASE_URL", "").strip().strip("\"'").strip().rstrip("/")
@@ -136,6 +158,10 @@ def main():
         print("keep-alive ok", ahora)
         return
 
+    if a.solo_personas:
+        cargar_personas(base, clave, a.solo_personas, a.dry_run)
+        print("Listo.")
+        return
     if not a.carpeta:
         sys.exit("Indica la carpeta con los JSON.")
     cursos = [c for c in a.cursos.split(",") if c]
@@ -168,6 +194,11 @@ def main():
         antes_u = leer_existentes(base, clave, "ultimo_llamado", {u["acto"] for u in ultimo})
         ultimo = no_empeorar(ultimo, antes_u, lambda f: (f["acto"], f["cuerpo_cod"], f["esp"]), puntuacion_ultimo)
     upsert(base, clave, "ultimo_llamado", ultimo, a.dry_run)
+    if a.personas:
+        if os.path.exists(a.personas):
+            cargar_personas(base, clave, a.personas, a.dry_run)
+        else:
+            print("  (no hay fichero de personas; se omite la busqueda por nombre)")
     print("Listo.")
 
 

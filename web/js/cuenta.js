@@ -8,7 +8,7 @@ const cfg = window.CONFIG || {};
 const URL_SB = (cfg.supabaseUrl || "").replace(/\/$/, "");
 const CLAVE_SESION = "docentes-aragon:sesion";
 const CLAVE_REF = "docentes-aragon:ref";     // código de invitación que trae el enlace (?ref=ARA-XXXXX), hasta que se use
-const VERSION_PRIVACIDAD = "2026-11";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
+const VERSION_PRIVACIDAD = "2026-11-06";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
 
 export const CUENTA = {
   activa: MODO_CUENTA,
@@ -20,6 +20,9 @@ export const CUENTA = {
   mensaje: "",              // aviso para enseñar en "Mi seguimiento" (errores de login, etc.)
   recuperando: false,       // true si se llega desde el enlace de «he olvidado mi contraseña»: toca elegir una nueva
   sync: "",                 // "", "guardando", "guardado" o "error"
+  perfil: null,             // { nombre, cambios_restantes, busquedas_restantes, admin } (función mi_perfil)
+  admin: false,             // true si es administradora (solo docentscv@gmail.com; lo decide el servidor, no la web)
+  verComo: null,            // { user_id, email, nombre } mientras el administrador mira la web como otra persona (solo lectura)
 };
 
 /** ¿Puede esta persona usar las funciones personales (listas y destinos)? */
@@ -110,7 +113,111 @@ export async function cargarPase() {
   const [p] = await r.json();
   CUENTA.ultimoPase = p || null;
   CUENTA.pase = p && p.expira >= hoyUTC() ? p : null;
+  if (CUENTA.admin && !CUENTA.pase) CUENTA.pase = { tipo: "admin", curso: "", expira: "2099-12-31" };   // el administrador entra siempre
   actualizarEstado();
+}
+
+/** Llama a una función de la base de datos (rpc). Devuelve lo que responde o lanza un Error si el servidor la rechaza. */
+async function rpc(nombre, cuerpo = {}) {
+  const r = await api(`/rest/v1/rpc/${nombre}`, { metodo: "POST", cuerpo });
+  if (!r.ok) {
+    let m = ""; try { m = (await r.json()).message || ""; } catch (e) { /* sin cuerpo */ }
+    const err = new Error(m || `Error ${r.status}`); err.estado = r.status; throw err;
+  }
+  const t = await r.text();
+  return t ? JSON.parse(t) : null;
+}
+
+// ---------- nombre, búsqueda automática de listas, mensajes ----------
+export async function cargarPerfil() {
+  try { CUENTA.perfil = await rpc("mi_perfil"); CUENTA.admin = !!CUENTA.perfil?.admin; }
+  catch (e) { console.warn("mi_perfil", e); CUENTA.perfil = null; CUENTA.admin = false; }
+}
+export const ERRORES_NOMBRE = {
+  invalido: "Escribe tus apellidos y tu nombre, tal como salen en las listas (por ejemplo: GARCÍA LÓPEZ, MARÍA).",
+  limite: "Ya has cambiado el nombre 3 veces. Escríbenos desde «Sugerencias y reclamaciones» y lo corregimos.",
+  error: "No se pudo guardar el nombre. Inténtalo de nuevo.",
+};
+/** ¿Parece un nombre completo (al menos dos palabras)? Lo mismo que exige el servidor. */
+export const nombreValido = (n) => (n || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z]+/g, " ").trim().split(" ").filter(Boolean).length >= 2 && (n || "").trim().length >= 5;
+/** Guarda el nombre de la cuenta. Devuelve ok | invalido | limite | error. */
+export async function guardarNombre(nombre) {
+  try {
+    const r = await rpc("guardar_nombre", { p_nombre: nombre });
+    if (r.estado === "ok") await cargarPerfil();
+    return r.estado;
+  } catch (e) { return "error"; }
+}
+/** Busca en las listas del curso a la persona con el nombre de esta cuenta. Devuelve { estado: ok | varios | no_encontrado | limite | sin_nombre | sin_pase | error, listas?, restantes? }. */
+export async function buscarMisListas(nif = "") {
+  try {
+    const r = await rpc("buscar_mis_listas", { p_nif: nif || null });
+    if (CUENTA.perfil && r.restantes != null) CUENTA.perfil.busquedas_restantes = r.restantes;
+    return r;
+  } catch (e) { return { estado: "error" }; }
+}
+/** Sugerencia o reclamación para la administración. Devuelve ok | invalido | limite | error. */
+export async function enviarMensaje(tipo, texto) {
+  try { return (await rpc("enviar_mensaje", { p_tipo: tipo, p_texto: texto })).estado; } catch (e) { return "error"; }
+}
+export async function misMensajes() {
+  try {
+    const r = await api("/rest/v1/mensajes?select=id,tipo,texto,estado,respuesta,creado&order=creado.desc&limit=50");
+    return r.ok ? await r.json() : [];
+  } catch (e) { return []; }
+}
+
+// ---------- administración (el servidor comprueba siempre que quien llama es administradora) ----------
+export const adminResumen = () => rpc("admin_resumen");
+export const adminUsuarios = (buscar = "", desde = 0, limite = 50) => rpc("admin_usuarios", { p_buscar: buscar || null, p_desde: desde, p_limite: limite });
+export const adminEmbudo = () => rpc("admin_embudo");
+export const adminPruebasTerminadas = (dias = 22) => rpc("admin_pruebas_terminadas", { p_dias: dias });
+/** accion: regalar | ampliar_prueba | anular | nombre. Devuelve ok | ya_tiene | invalido | no_existe | ... */
+export const adminAccion = (user, accion, valor = null) => rpc("admin_accion", { p_user: user, p_accion: accion, p_valor: valor });
+export const adminMensajes = (estado = null) => rpc("admin_mensajes", { p_estado: estado });
+export const adminResponder = (id, estado, respuesta = null) => rpc("admin_responder", { p_id: id, p_estado: estado, p_respuesta: respuesta });
+
+let copiaYo = null;
+/** «Ver la web como otra persona»: carga sus listas y destinos en pantalla, en solo lectura (no se guarda nada). Queda anotado en el servidor. */
+export async function verComo(userId) {
+  const r = await rpc("admin_ver_seguimiento", { p_user: userId });
+  if (!r) throw new Error("No existe esa persona.");
+  if (!CUENTA.verComo) copiaYo = { listas: YO.listas, destinos: YO.destinos };
+  YO.listas = r.datos?.listas || []; YO.destinos = r.datos?.destinos || [];
+  CUENTA.verComo = { user_id: userId, email: r.email, nombre: r.nombre };
+}
+export function salirVerComo() {
+  if (!CUENTA.verComo) return;
+  YO.listas = copiaYo?.listas || []; YO.destinos = copiaYo?.destinos || []; CUENTA.verComo = null; copiaYo = null;
+}
+
+// PDF de Educaragón que sube la administradora (Storage privado «aragon-pdf»); el robot semanal los procesa y los borra.
+async function conSesion() {
+  if (sesion && sesion.expires_at - 60 < ahoraSeg()) await refrescar();
+  return { apikey: cfg.supabaseAnonKey, Authorization: "Bearer " + (sesion?.access_token || cfg.supabaseAnonKey) };
+}
+export async function adminListarPdf() {
+  const r = await fetch(`${URL_SB}/storage/v1/object/list/aragon-pdf`, { method: "POST", headers: { ...(await conSesion()), "Content-Type": "application/json" },
+    body: JSON.stringify({ prefix: "", limit: 100, offset: 0, sortBy: { column: "name", order: "desc" } }) });
+  if (!r.ok) throw new Error(`No se pudo leer la lista de PDF (${r.status})`);
+  return (await r.json()).filter((o) => o.id && /\.pdf$/i.test(o.name)).map((o) => ({ nombre: o.name, bytes: o.metadata?.size || 0 }));
+}
+export async function adminSubirPdf(archivo) {
+  if (!/\.pdf$/i.test(archivo.name)) return { ok: false, mensaje: `${archivo.name}: solo se admiten archivos PDF.` };
+  if (archivo.size > 30 * 1024 * 1024) return { ok: false, mensaje: `${archivo.name}: pesa más de 30 MB.` };
+  if ((await archivo.slice(0, 5).text()) !== "%PDF-") return { ok: false, mensaje: `${archivo.name}: no parece un PDF.` };
+  const limpio = archivo.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9._ -]+/g, "_");
+  const nombre = `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${limpio}`;
+  try {
+    const r = await fetch(`${URL_SB}/storage/v1/object/aragon-pdf/${encodeURIComponent(nombre)}`, { method: "POST", body: archivo,
+      headers: { ...(await conSesion()), "Content-Type": "application/pdf", "x-upsert": "false" } });
+    if (!r.ok) return { ok: false, mensaje: `${archivo.name}: no se pudo subir (${r.status}).` };
+    return { ok: true, nombre };
+  } catch (e) { return { ok: false, mensaje: `${archivo.name}: no hay conexión.` }; }
+}
+export async function adminBorrarPdf(nombre) {
+  const r = await fetch(`${URL_SB}/storage/v1/object/aragon-pdf`, { method: "DELETE", headers: { ...(await conSesion()), "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: [nombre] }) });
+  return r.ok;
 }
 
 // ---------- seguimiento sincronizado ----------
@@ -143,7 +250,7 @@ async function subir() {
   return CUENTA.sync === "guardado";
 }
 const subirTarde = debounce(() => { if (CUENTA.estado === "con_pase") subir(); }, 600);
-if (MODO_CUENTA) enlace.alGuardar = () => { if (CUENTA.estado === "con_pase") { CUENTA.sync = "guardando"; avisar(); subirTarde(); } };
+if (MODO_CUENTA) enlace.alGuardar = () => { if (CUENTA.verComo) return; if (CUENTA.estado === "con_pase") { CUENTA.sync = "guardando"; avisar(); subirTarde(); } };
 
 /** Texto del estado de sincronización, en un elemento con id="sync-estado" si está en pantalla. */
 export const TEXTO_SYNC = { "": "", guardando: "Guardando…", guardado: "Guardado en tu cuenta.", error: "No se pudo guardar en tu cuenta. Comprueba la conexión y vuelve a intentarlo." };
@@ -159,6 +266,7 @@ async function cargarCuentaDeLaSesion() {
   try {
     // La primera vez que entra, el servidor crea su cuenta de Docentes Aragón con la prueba gratuita y su código de invitación.
     try { await api("/rest/v1/rpc/mi_acceso", { metodo: "POST", cuerpo: {} }); } catch (e) { console.warn("mi_acceso", e); }
+    await cargarPerfil();      // antes que el pase: el administrador entra siempre
     await cargarPase();
     if (CUENTA.estado === "con_pase") await cargarSeguimiento();
   } catch (e) {
@@ -228,10 +336,12 @@ export async function entrarConCorreo(email, password) {
   return { ok: true };
 }
 /** Crea la cuenta. Con confirmación de correo (lo normal) no hay sesión hasta pulsar el enlace: { ok, sesion: false }. */
-export async function crearCuenta(email, password, codigo = "") {
+export async function crearCuenta(email, password, codigo = "", nombre = "") {
   const datos = { acepta_privacidad_aragon: new Date().toISOString(), version_privacidad_aragon: VERSION_PRIVACIDAD };
   const cod = (codigo || "").trim().toUpperCase();
   if (cod) datos.codigo_invitacion_aragon = cod;      // el servidor lo aplica la primera vez que entre (mi_acceso)
+  const nom = (nombre || "").trim();
+  if (nom) datos.nombre_aragon = nom;                 // idem: se guarda como «mi nombre en las listas»
   const r = await auth("/signup", { volverA: vuelta(), cuerpo: { email, password, data: datos } });
   if (!r.ok) return r;
   olvidarCodigo(); CUENTA.invitacion = false;
@@ -287,13 +397,14 @@ export function entrarConGoogle() {
 
 function vaciarDatosPersonales() {
   YO.listas = []; YO.destinos = []; CUENTA.pase = null; CUENTA.ultimoPase = null; CUENTA.sync = "";
+  CUENTA.perfil = null; CUENTA.admin = false; CUENTA.verComo = null; copiaYo = null;
 }
 export async function salir() {
   const token = sesion?.access_token;
   fijarSesion(null); vaciarDatosPersonales(); CUENTA.recuperando = false; actualizarEstado();
   if (token) { try { await fetch(`${URL_SB}/auth/v1/logout?scope=local`, { method: "POST", headers: { apikey: cfg.supabaseAnonKey, Authorization: "Bearer " + token } }); } catch (e) { /* da igual */ } }
 }
-/** Borra el pase, la prueba, el código de invitación y el seguimiento de Docentes Aragón (la cuenta, con su correo y contraseña, es compartida con otras webs y no se toca) y cierra la sesión. */
+/** Borra el pase, la prueba, el código de invitación, el nombre, los mensajes y el seguimiento de Docentes Aragón (la cuenta, con su correo y contraseña, es compartida con otras webs y no se toca) y cierra la sesión. */
 export async function borrarMisDatos() {
   const r = await api("/rest/v1/rpc/borrar_mis_datos", { metodo: "POST", cuerpo: {} });
   if (!r.ok) throw new Error("No se pudieron borrar tus datos. Inténtalo de nuevo.");
