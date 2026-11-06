@@ -40,6 +40,18 @@ export function textoKm(k) {
   return k < 10 ? `${k.toFixed(1).replace(".", ",")} km` : `${Math.round(k).toLocaleString("es-ES")} km`;
 }
 
+/** Tiempo aproximado en coche (minutos) a partir de la distancia en línea recta: la carretera alarga ~25 % y la velocidad media sube con la distancia. Solo orientativo. */
+export function minutosCoche(kmRecta) {
+  const carretera = kmRecta * 1.25;
+  const v = carretera < 30 ? 50 : carretera < 80 ? 70 : 80;
+  return Math.max(5, Math.round((carretera / v) * 12) * 5);      // *60/5 = *12: redondeado a múltiplos de 5 min
+}
+export function textoTiempo(kmRecta) {
+  if (kmRecta < 1) return "unos 5 min";
+  const m = minutosCoche(kmRecta), hh = Math.floor(m / 60), mm = m % 60;
+  return "unos " + (hh ? (mm ? `${hh} h ${mm} min` : `${hh} h`) : `${mm} min`);
+}
+
 /** Coordenadas de la localidad de un centro (las de web/data/localidades.json), o null. */
 export function coordsLocalidad(localidad) {
   const l = D.locs[localidad];

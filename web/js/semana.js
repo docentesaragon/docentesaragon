@@ -1,16 +1,18 @@
 // Sección "Semana": hasta dónde llegó la lista en cada especialidad en una adjudicación.
-import { h, llenar, norm, miles, textoClave, bonito, fmtLarga } from "./util.js";
-import { D, YO, guardarYo, actosDe, nombreCuerpo } from "./datos.js";
+import { h, llenar, norm, miles, textoClave, bonito, fmtLarga, centroBonito, localidadBonita } from "./util.js";
+import { D, YO, guardarYo, actosDe, nombreCuerpo, cargarVacantes } from "./datos.js";
+import { botonMapa, botonFavorito, mostrarAvisoFav } from "./botonescentro.js";
 import { regla, segmento, campoSelect, etiquetaActo, situacion, cabeceraActo, nombreEspBonito, misListas } from "./comun.js";
 
 const estado = { actoId: null, orden: "esp", texto: "" };
+const abiertas = new Set();      // especialidades con la lista de centros desplegada (se conservan al repintar)
 
 export function semana(raiz, params = {}, mantener = false) {
   if (params.cuerpo) { YO.cuerpo = params.cuerpo; guardarYo(); }
   const cuerpo = YO.cuerpo;
   const actos = actosDe(D.curso, cuerpo);
   // Al entrar en la pestaña se enseña siempre la semana más reciente (aunque su adjudicación aún no esté publicada).
-  if (!mantener) estado.actoId = null;
+  if (!mantener) { estado.actoId = null; abiertas.clear(); }
   if (!actos.some((a) => a.acto === estado.actoId)) estado.actoId = (actos.find((a) => a.tiene_candidatos || a.tiene_adjudicadas) || actos[0])?.acto;
   const acto = D.actoPorId.get(estado.actoId);
   const ultimaAdjudicada = actos.find((a) => a.tiene_adjudicadas);
@@ -29,7 +31,7 @@ export function semana(raiz, params = {}, mantener = false) {
   llenar(raiz, cabeceraActo(acto),
     sinAdjudicar ? h("p", { class: "aviso-pendiente", id: "aviso-pendiente" }, "Mientras llega la adjudicación: ",
       h("button", { type: "button", class: "enlace", onclick: () => { estado.actoId = ultimaAdjudicada.acto; redibujar(); } }, `Ver la última adjudicación (${fmtLarga(ultimaAdjudicada.fecha_adjudicacion)})`)) : null,
-    controles, contLista);
+    controles, h("p", { class: "aviso-fav", id: "aviso-fav", role: "status", "aria-live": "polite", hidden: true }), contLista);
 
   function pintarLista() {
     const filas = (D.ultimoPorActo.get(estado.actoId) || []).filter((u) => (u.cuerpo_cod === "0597") === (cuerpo === "maestros"));
@@ -54,7 +56,7 @@ export function semana(raiz, params = {}, mantener = false) {
         cuerpoPrevio = u.cuerpo_cod;
         cajas.push(h("div", { class: "cab-lista", style: "display:block;font-weight:700;color:var(--tinta)" }, bonito(nombreCuerpo(u.cuerpo_cod))));
       }
-      cajas.push(fila(u, nombre, !acto?.tiene_adjudicadas));
+      cajas.push(fila(u, nombre, !acto?.tiene_adjudicadas, estado.actoId, alCambiar));
     }
     llenar(contLista, 
       h("div", { class: "lista-esp" }, cab, cajas.length ? cajas : h("p", { class: "vacio", style: "padding:1rem" },
@@ -62,10 +64,42 @@ export function semana(raiz, params = {}, mantener = false) {
       h("p", { class: "tenue peq", style: "margin-top:.75rem" },
         "La barra roja marca hasta qué número de los convocados llegó la adjudicación ordinaria. La posición indica la lista, la fecha del bloque, el bloque y el orden dentro del bloque, tal como figuran en el PDF de candidatos."));
   }
+  const alCambiar = (texto) => { pintarLista(); mostrarAvisoFav(texto); };
   pintarLista();
 }
 
-function fila(u, nombre, pendiente) {
+/** Vacantes de una especialidad en esa semana, una fila por vacante y al final los botones de mapa y favorito (como en Vacantes). */
+function tablaCentros(u, actoId, alCambiar) {
+  const vs = D.vacantes.filter((v) => v.acto === actoId && v.cuerpo_cod === u.cuerpo_cod && v.esp === u.esp)
+    .sort((a, b) => a.localidad.localeCompare(b.localidad, "es") || a.centro.localeCompare(b.centro, "es") || a.vacante - b.vacante);
+  if (!vs.length) return h("p", { class: "tenue peq" }, "No hay vacantes con centro para esta especialidad en esta semana.");
+  return h("div", { class: "tabla-wrap" }, h("table", { class: "datos tabla-centros" },
+    h("thead", null, h("tr", null, h("th", null, "Centro y localidad"), h("th", null, "Jornada"), h("th", null, "Duración"), h("th", null, "Estado"), h("th", null, h("span", { class: "solo-lector" }, "Mapa y favorito")))),
+    h("tbody", null, vs.map((v) => h("tr", null,
+      h("td", null, centroBonito(v.centro), h("div", { class: "peq tenue" }, `${localidadBonita(v.localidad)} (${localidadBonita(v.provincia)})`)),
+      h("td", null, v.jornada || "—"),
+      h("td", null, v.duracion || "—"),
+      h("td", { class: "estado" }, h("span", { class: "punto" + (v.estado === "adjudicada" ? " lleno" : "") }), v.estado === "adjudicada" ? "Adjudicada" : "Sin adjudicar"),
+      h("td", { class: "acciones-fila" }, botonMapa(v), botonFavorito(v, alCambiar)))))));
+}
+
+function desplegable(u, actoId, alCambiar) {
+  const clave = `${actoId}|${u.cuerpo_cod}|${u.esp}`;
+  const cuerpo = h("div", { class: "centros-cuerpo" });
+  const pintar = async () => {
+    if (D.vacantes._curso !== D.curso) {
+      llenar(cuerpo, h("p", { class: "tenue", role: "status" }, "Cargando vacantes…"));
+      try { const v = await cargarVacantes(D.curso); v._curso = D.curso; } catch (e) { llenar(cuerpo, h("p", { class: "error-txt", role: "alert" }, "No se han podido cargar las vacantes. Inténtalo de nuevo.")); return; }
+    }
+    llenar(cuerpo, tablaCentros(u, actoId, alCambiar));
+  };
+  const det = h("details", { class: "centros-esp", open: abiertas.has(clave), ontoggle: () => { if (det.open) { abiertas.add(clave); pintar(); } else abiertas.delete(clave); } },
+    h("summary", null, "Ver centros y vacantes"), cuerpo);
+  if (det.open) pintar();
+  return det;
+}
+
+function fila(u, nombre, pendiente, actoId, alCambiar) {
   const mias = misListas().filter((l) => l.cuerpo_cod === u.cuerpo_cod && l.esp === u.esp);
   const sit = mias.length ? situacion(mias[0].clave, u) : null;
   const sinLista = !u.convocados;
@@ -84,5 +118,6 @@ function fila(u, nombre, pendiente) {
           : sinLista ? h("small", null, "Sin listado de candidatos publicado esta semana")
           : u.relacion_ultimo ? [`n.º ${miles(u.relacion_ultimo)} `, h("small", null, `de ${miles(u.convocados)} convocados`)]
             : h("small", null, `Sin adjudicaciones ordinarias de esta lista (${miles(u.convocados)} convocados)`))),
-    h("div", { class: "posicion posicion-col" }, u.clave_ultimo ? textoClave(u.clave_ultimo) : "—"));
+    h("div", { class: "posicion posicion-col" }, u.clave_ultimo ? textoClave(u.clave_ultimo) : "—"),
+    u.vacantes || u.adjudicadas ? desplegable(u, actoId, alCambiar) : null);
 }

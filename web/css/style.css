@@ -287,7 +287,7 @@ a.boton.solo-admin { color: var(--rojo); }
 .datos td.acciones-fila .icono-boton + .icono-boton { margin-left: .25rem; }
 /* En el móvil la tabla se desplaza hacia los lados: los botones se quedan pegados a la derecha para no tener que buscarlos */
 @media (max-width: 720px) {
-  #tabla-vacantes th:last-child, .datos td.acciones-fila { position: sticky; right: 0; background: var(--panel); box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .25); }
+  #tabla-vacantes th:last-child, .tabla-centros th:last-child, .datos td.acciones-fila { position: sticky; right: 0; background: var(--panel); box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .25); }
 }
 .icono-boton { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; background: var(--panel); color: var(--tinta-2); border: 1px solid var(--linea); border-radius: var(--radio); cursor: pointer; vertical-align: middle; }
 .icono-boton:hover { border-color: var(--pirineo); color: var(--pirineo); }
@@ -311,3 +311,41 @@ a.boton.solo-admin { color: var(--rojo); }
 .favoritos li { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; justify-content: space-between; padding: .5rem 0; border-top: 1px solid var(--linea); }
 .favoritos li:first-child { border-top: 0; }
 .fav-acciones { display: flex; flex-wrap: wrap; gap: 0 .6rem; }
+
+/* ---------- v3.1: entrada a la derecha, tiempo en coche y centros desplegables en Semana ---------- */
+.acceso-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 1rem 1.25rem; align-items: start; }
+.acceso-grid .form-acceso { grid-column: 2; grid-row: 1; position: sticky; top: 4.5rem; margin: 0; }
+.acceso-grid .acceso-info { grid-column: 1; grid-row: 1; margin: 0; }
+@media (max-width: 860px) {
+  .acceso-grid { grid-template-columns: minmax(0, 1fr); }
+  .acceso-grid .form-acceso, .acceso-grid .acceso-info { grid-column: 1; position: static; }
+  .acceso-grid .acceso-info { grid-row: 2; }
+}
+.tiempo { margin: .1rem 0 .4rem; }
+.tiempo strong { font: 700 1.15rem var(--f-cifras); }
+.fila-esp .centros-esp { grid-column: 1 / -1; }
+.centros-esp summary { cursor: pointer; color: var(--pirineo); font-size: .9rem; padding: .2rem 0; }
+.centros-esp .centros-cuerpo { margin-top: .5rem; }
+.tabla-centros { font-size: .88rem; }
+
+/* ---------- v3.1: probabilidad de plaza ---------- */
+.prob { margin: .75rem 0; padding: .75rem .9rem; border: 1px solid var(--linea); border-radius: var(--radio); background: var(--panel); }
+.prob h4 { margin: 0 0 .5rem; font-size: 1rem; }
+.prob-caja { border-radius: var(--radio); padding: .6rem .8rem; border: 1px solid var(--linea); }
+.prob-caja.baja { background: #fdecea; border-color: #e5a29b; }
+.prob-caja.media { background: var(--oro-fondo); border-color: var(--oro); }
+.prob-caja.alta { background: #e7f5ec; border-color: #8ccaa0; }
+.prob-nivel { margin: 0; font-size: 1.3rem; }
+.prob-barra { height: 8px; border-radius: 4px; background: rgba(0, 0, 0, .1); margin-top: .35rem; overflow: hidden; }
+.prob-barra span { display: block; height: 100%; width: var(--p); background: currentColor; opacity: .75; }
+.prob-caja.baja { color: #8a1c14; } .prob-caja.media { color: #7a5600; } .prob-caja.alta { color: #1a6b36; }
+.prob-caja p.tenue { color: var(--tinta-2); }
+.prob-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .5rem; margin-top: .6rem; }
+.prob-datos > div { border: 1px solid var(--linea); border-radius: var(--radio); padding: .4rem .6rem; display: grid; gap: .1rem; }
+.prob-datos strong { font-size: 1.25rem; }
+.grafico-prob { width: 100%; height: auto; display: block; color: var(--tinta-2); }
+.grafico-prob text { fill: var(--tinta-2); font: 11px var(--f-texto); }
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) .prob-caja.baja, :root:not([data-tema="claro"]) .prob-caja.media, :root:not([data-tema="claro"]) .prob-caja.alta { background: var(--panel); } }
+:root[data-tema="oscuro"] .prob-caja.baja, :root[data-tema="oscuro"] .prob-caja.media, :root[data-tema="oscuro"] .prob-caja.alta { background: var(--panel); }
+.leyenda-verde { color: #1a7f3c; font-weight: 600; }
+.leyenda-oro { color: #8a6200; font-weight: 600; }

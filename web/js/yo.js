@@ -8,8 +8,9 @@ import { productoActual, cursoDeProducto, compraDisponible, precioEnPlay, compra
 import { situacion, nombreEspBonito } from "./comun.js";
 import { filtrar } from "./vacantes.js";
 import { ir } from "./ruta.js";
+import { tarjetaProbabilidad } from "./probabilidad.js";
 import { bloqueCasa } from "./casa.js";
-import { cargarMunicipios, km, textoKm, coordsLocalidad, enlacesRuta, selectorMunicipio } from "./distancia.js";
+import { cargarMunicipios, km, textoKm, textoTiempo, coordsLocalidad, enlacesRuta, selectorMunicipio } from "./distancia.js";
 import { esFavorito, alternarFavorito, quitarFavorito } from "./favoritos.js";
 
 const URL_PADDOC = "https://aplicaciones.aragon.es/epdtp/welcome";     // solicitud de destinos de Educaragón
@@ -184,6 +185,7 @@ function bloqueLista(l, raiz, ro = false) {
       h("div", null, h("h3", null, `${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`), h("p", { class: "tenue peq", style: "margin:0" }, `Tu posición: ${textoClave(l.clave)}`)),
       ro ? null : h("button", { type: "button", class: "boton sec", onclick: () => { YO.listas = YO.listas.filter((x) => x !== l); guardarYo(); yo(raiz); } }, "Quitar")),
     h("p", { class: "resumen-frase situacion" }, resumen),
+    tarjetaProbabilidad(l),
     sits.length ? h("div", { class: "tabla-wrap" }, h("table", { class: "datos" },
       h("thead", null, h("tr", null, h("th", null, "Oferta"), h("th", { class: "num" }, "Último llamado"), h("th", null, "Tu situación"))),
       h("tbody", null, sits.slice(0, 12).map(({ a, u, sit }) => h("tr", null,
@@ -217,7 +219,8 @@ function bloqueLugar(raiz) {
         desde && hasta
           ? h("p", { class: "distancia", id: "lugar-km" }, h("strong", { class: "num" }, textoKm(km(desde, hasta))), ` en línea recta desde ${casa}`)
           : h("p", { class: "tenue", id: "lugar-km" }, "No tenemos las coordenadas de este sitio para calcular la distancia, pero puedes ver la ruta."),
-        h("p", { class: "tenue peq" }, "Es la distancia entre tu municipio y la localidad del centro; por carretera suele ser mayor." + (hasta?.aprox ? " Las coordenadas de esta localidad son aproximadas." : "")),
+        desde && hasta ? h("p", { class: "tiempo", id: "lugar-tiempo" }, h("strong", null, textoTiempo(km(desde, hasta))), " en coche (aproximado)") : null,
+        h("p", { class: "tenue peq" }, "Es la distancia entre tu municipio y la localidad del centro; por carretera suele ser mayor, y el tiempo es solo una estimación sin tráfico." + (hasta?.aprox ? " Las coordenadas de esta localidad son aproximadas." : "")),
         h("div", { class: "campos" },
           h("a", { class: "boton", id: "lugar-ruta", href: rutas.google, target: "_blank", rel: "noopener" }, "Cómo llegar (Google Maps)"),
           rutas.osm ? h("a", { class: "boton sec", id: "lugar-osm", href: rutas.osm, target: "_blank", rel: "noopener" }, "OpenStreetMap") : null));
@@ -250,7 +253,7 @@ function bloqueFavoritos(raiz, ro = false) {
       const m = datos.porClave.get(casa); if (!m) return;
       for (const li of lista.children) {
         const f = YO.favoritos.find((x) => x.cod === li.dataset.cod), c = f && coordsLocalidad(f.localidad);
-        if (c) li.querySelector(".fav-km").textContent = `· a ${textoKm(km(m, c))} de ${casa.replace(/\s\(.*\)$/, "")}`;
+        if (c) li.querySelector(".fav-km").textContent = `· a ${textoKm(km(m, c))} (${textoTiempo(km(m, c))} en coche) de ${casa.replace(/\s\(.*\)$/, "")}`;
       }
     }).catch(() => { /* sin distancias */ });
   }
@@ -463,8 +466,11 @@ function pantallaEntrada(raiz, modo = modoAcceso) {
   const cfg = window.CONFIG || {}, dias = cfg.diasPrueba || 15;
   if (CUENTA.invitacion) { modo = modoAcceso = "registro"; CUENTA.invitacion = false; }   // llegó desde el enlace de una persona que la invita
   const prod = productoActual(), info = cursoDeProducto(prod);
+  // El formulario va primero (en el móvil sale arriba) y en pantallas anchas se coloca a la derecha, junto al título.
   llenar(raiz, cabeceraAcceso(), mensajeCuenta(),
-    h("div", { class: "bloque" },
+    h("div", { class: "acceso-grid" },
+    formularioAcceso(raiz, modo),
+    h("div", { class: "bloque acceso-info" },
       h("h3", null, "Qué incluye"),
       h("p", { class: "destacado", id: "prueba-gratis" }, h("strong", null, `Prueba gratis ${dias} días`), ": crea tu cuenta y empieza a seguir tus listas ahora mismo, sin pagar nada. ",
         codigoPendiente() ? "Te ha invitado una persona: tu código ya está puesto al crear la cuenta." : ""),
@@ -475,8 +481,7 @@ function pantallaEntrada(raiz, modo = modoAcceso) {
         h("li", null, "Tus datos en tu cuenta: los ves igual en el móvil y en el ordenador."),
         h("li", null, "Avisos en la app cuando sale una vacante nueva o se adjudica una vacante en tus centros favoritos.")),
       h("p", null, "Pase del curso ", info ? info.curso : "", ": ", precioTexto(prod), info ? ` hasta el ${info.hasta}. Pago único, no se renueva solo.` : "."),
-      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, lo que apuntes aquí (listas, destinos y centros favoritos) y, si quieres, tu nombre tal como sale en las listas y el municipio donde vives. Nunca guardamos tu DNI (si hay otra persona con tu mismo nombre, para buscar te pedimos las cifras que ya salen tapadas en los listados, y no se guardan). Puedes borrar todos tus datos de Aragón cuando quieras.")),
-    formularioAcceso(raiz, modo));
+      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, lo que apuntes aquí (listas, destinos y centros favoritos) y, si quieres, tu nombre tal como sale en las listas y el municipio donde vives. Nunca guardamos tu DNI (si hay otra persona con tu mismo nombre, para buscar te pedimos las cifras que ya salen tapadas en los listados, y no se guardan). Puedes borrar todos tus datos de Aragón cuando quieras."))));
 }
 
 function pantallaPase(raiz) {

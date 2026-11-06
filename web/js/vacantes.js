@@ -1,10 +1,8 @@
 // Sección "Vacantes": búsqueda con filtros sobre las vacantes del curso.
-import { h, s, llenar, norm, miles, fmtCorta, fmtDMA, centroBonito, localidadBonita, csv, descargar, esMaestros } from "./util.js";
+import { h, llenar, norm, miles, fmtCorta, fmtDMA, centroBonito, localidadBonita, csv, descargar, esMaestros } from "./util.js";
 import { D, YO, nombreEsp, nombreCuerpo } from "./datos.js";
 import { nombreEspBonito } from "./comun.js";
-import { puedeSeguir, CUENTA } from "./cuenta.js";
-import { ir } from "./ruta.js";
-import { esFavorito, alternarFavorito } from "./favoritos.js";
+import { botonMapa, botonFavorito, mostrarAvisoFav } from "./botonescentro.js";
 
 export const F = {
   cuerpo: null, semana: "ult1", prov: "", loc: "", centro: "", esp: "", estado: "todas", jornada: "", duracion: "",
@@ -112,7 +110,7 @@ export function vacantes(raiz, params = {}) {
       h("td", null, v.duracion || "—", v.fecha_fin_estimada ? h("div", { class: "peq tenue" }, `hasta ${fmtDMA(v.fecha_fin_estimada)}`) : null),
       h("td", null, v.causa || v.obligacion || "—", v.singular ? h("div", { class: "peq tenue" }, "Singularizada") : null),
       h("td", { class: "estado" }, h("span", { class: "punto" + (ESTADO[v.estado][1] ? " lleno" : "") }), ESTADO[v.estado][0]),
-      h("td", { class: "acciones-fila" }, botonMapa(v), botonFavorito(v))));
+      h("td", { class: "acciones-fila" }, botonMapa(v), botonFavorito(v, alCambiar))));
     llenar(zona, 
       h("div", { class: "mas", style: "margin-top:0" },
         h("p", { style: "margin:0", id: "contador", "aria-live": "polite" }, `${miles(todas.length)} vacantes (${miles(adj)} adjudicadas, ${miles(todas.length - adj)} sin adjudicar).`),
@@ -124,46 +122,8 @@ export function vacantes(raiz, params = {}) {
         : h("p", { class: "vacio" }, "Ninguna vacante cumple estos filtros. Prueba con «Todo el curso» o quita algún filtro."),
       todas.length > F.n ? h("div", { class: "mas" }, h("button", { type: "button", class: "boton sec", id: "mas", onclick: () => { F.n += 50; pintar(); } }, "Mostrar 50 más"), h("span", { class: "tenue peq" }, `Mostrando ${miles(Math.min(F.n, todas.length))} de ${miles(todas.length)}`)) : null);
   }
-  repintar = () => { pintar(); mostrarAvisoFav(); };
-  avisoFav = "";
+  const alCambiar = (texto) => { pintar(); mostrarAvisoFav(texto); };
   pintar();
-}
-
-// ---------- botones de cada fila: mapa (distancia desde tu casa) y favorito (el centro) ----------
-const ICONO = {
-  mapa: "M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11zM12 7.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z",
-  estrella: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
-};
-const icono = (clave, relleno = false) => s("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true", fill: relleno ? "currentColor" : "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round" }, s("path", { d: ICONO[clave] }));
-
-function botonMapa(v) {
-  const nombre = centroBonito(v.centro);
-  return h("button", { type: "button", class: "icono-boton mapa", title: "Distancia desde tu casa", "aria-label": `Ver a qué distancia está ${nombre} (${localidadBonita(v.localidad)})`,
-    onclick: () => ir("yo", { lugar: v.localidad, centro: v.centro, cod: v.centro_cod || "", prov: v.provincia || "" }) }, icono("mapa"));
-}
-
-let avisoFav = "";      // texto que se enseña encima de la tabla tras pulsar la estrella
-let repintar = () => {};
-function botonFavorito(v) {
-  if (!v.centro_cod) return null;
-  const nombre = centroBonito(v.centro), fav = esFavorito(v.centro_cod);
-  return h("button", { type: "button", class: "icono-boton favorito" + (fav ? " activo" : ""), "aria-pressed": String(fav),
-    title: fav ? "Quitar de favoritos" : "Guardar este centro en favoritos",
-    "aria-label": fav ? `Quitar ${nombre} de mis favoritos` : `Guardar ${nombre} en mis favoritos y avisarme de novedades`,
-    onclick: () => {
-      if (!puedeSeguir()) { ir("yo"); return; }          // sin cuenta o sin pase: te lleva a Mi seguimiento para entrar
-      const ahora = alternarFavorito(v);
-      avisoFav = ahora
-        ? `«${nombre}» guardado en Mi seguimiento. ${CUENTA.activa && !CUENTA.perfil?.dispositivos ? "Para que te avisemos en el móvil, activa los avisos en Ajustes." : "Te avisaremos cuando haya una vacante nueva o una adjudicación."}`
-        : `«${nombre}» quitado de tus favoritos.`;
-      repintar();
-    } }, icono("estrella", fav));
-}
-function mostrarAvisoFav() {
-  const el = document.getElementById("aviso-fav"); if (!el) return;
-  if (!avisoFav) { el.hidden = true; return; }
-  llenar(el, avisoFav, " ", h("a", { href: "#/yo", id: "ver-favoritos" }, "Ver mis favoritos"));
-  el.hidden = false;
 }
 
 function exportar(filas) {
