@@ -8,7 +8,7 @@ const cfg = window.CONFIG || {};
 const URL_SB = (cfg.supabaseUrl || "").replace(/\/$/, "");
 const CLAVE_SESION = "docentes-aragon:sesion";
 const CLAVE_REF = "docentes-aragon:ref";     // código de invitación que trae el enlace (?ref=ARA-XXXXX), hasta que se use
-const VERSION_PRIVACIDAD = "2026-11-06";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
+const VERSION_PRIVACIDAD = "2026-11-06-v3";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
 
 export const CUENTA = {
   activa: MODO_CUENTA,
@@ -20,7 +20,7 @@ export const CUENTA = {
   mensaje: "",              // aviso para enseñar en "Mi seguimiento" (errores de login, etc.)
   recuperando: false,       // true si se llega desde el enlace de «he olvidado mi contraseña»: toca elegir una nueva
   sync: "",                 // "", "guardando", "guardado" o "error"
-  perfil: null,             // { nombre, cambios_restantes, busquedas_restantes, admin } (función mi_perfil)
+  perfil: null,             // { nombre, casa, avisos: {favoritos}, dispositivos, cambios_restantes, busquedas_restantes, admin } (función mi_perfil)
   admin: false,             // true si es administradora (solo docentscv@gmail.com; lo decide el servidor, no la web)
   verComo: null,            // { user_id, email, nombre } mientras el administrador mira la web como otra persona (solo lectura)
 };
@@ -118,7 +118,7 @@ export async function cargarPase() {
 }
 
 /** Llama a una función de la base de datos (rpc). Devuelve lo que responde o lanza un Error si el servidor la rechaza. */
-async function rpc(nombre, cuerpo = {}) {
+export async function rpc(nombre, cuerpo = {}) {
   const r = await api(`/rest/v1/rpc/${nombre}`, { metodo: "POST", cuerpo });
   if (!r.ok) {
     let m = ""; try { m = (await r.json()).message || ""; } catch (e) { /* sin cuerpo */ }
@@ -156,6 +156,22 @@ export async function buscarMisListas(nif = "") {
     return r;
   } catch (e) { return { estado: "error" }; }
 }
+/** Guarda el municipio de la cuenta («Utebo (Zaragoza)»; "" lo quita). Devuelve ok | invalido | error. */
+export async function guardarCasa(casa) {
+  try {
+    const r = await rpc("guardar_casa", { p_casa: casa });
+    if (r.estado === "ok") await cargarPerfil();
+    return r.estado;
+  } catch (e) { return "error"; }
+}
+/** Qué avisos quiere recibir, p. ej. { favoritos: true }. Devuelve true si se guardó. */
+export async function guardarAvisos(avisos) {
+  try {
+    const r = await rpc("guardar_avisos", { p_avisos: avisos });
+    if (CUENTA.perfil) CUENTA.perfil.avisos = r;
+    return true;
+  } catch (e) { return false; }
+}
 /** Sugerencia o reclamación para la administración. Devuelve ok | invalido | limite | error. */
 export async function enviarMensaje(tipo, texto) {
   try { return (await rpc("enviar_mensaje", { p_tipo: tipo, p_texto: texto })).estado; } catch (e) { return "error"; }
@@ -182,13 +198,13 @@ let copiaYo = null;
 export async function verComo(userId) {
   const r = await rpc("admin_ver_seguimiento", { p_user: userId });
   if (!r) throw new Error("No existe esa persona.");
-  if (!CUENTA.verComo) copiaYo = { listas: YO.listas, destinos: YO.destinos };
-  YO.listas = r.datos?.listas || []; YO.destinos = r.datos?.destinos || [];
+  if (!CUENTA.verComo) copiaYo = { listas: YO.listas, destinos: YO.destinos, favoritos: YO.favoritos };
+  YO.listas = r.datos?.listas || []; YO.destinos = r.datos?.destinos || []; YO.favoritos = favoritosValidos(r.datos?.favoritos);
   CUENTA.verComo = { user_id: userId, email: r.email, nombre: r.nombre };
 }
 export function salirVerComo() {
   if (!CUENTA.verComo) return;
-  YO.listas = copiaYo?.listas || []; YO.destinos = copiaYo?.destinos || []; CUENTA.verComo = null; copiaYo = null;
+  YO.listas = copiaYo?.listas || []; YO.destinos = copiaYo?.destinos || []; YO.favoritos = copiaYo?.favoritos || []; CUENTA.verComo = null; copiaYo = null;
 }
 
 // PDF de Educaragón que sube la administradora (Storage privado «aragon-pdf»); el robot semanal los procesa y los borra.
@@ -221,12 +237,17 @@ export async function adminBorrarPdf(nombre) {
 }
 
 // ---------- seguimiento sincronizado ----------
+/** Centros favoritos guardados: [{ cod, centro, localidad, provincia, desde }]. Se descarta lo que no tenga forma de favorito (máx. 100). */
+function favoritosValidos(lista) {
+  return (Array.isArray(lista) ? lista : []).filter((f) => f && typeof f === "object" && typeof f.cod === "string" && f.cod).slice(0, 100)
+    .map((f) => ({ cod: f.cod, centro: String(f.centro || ""), localidad: String(f.localidad || ""), provincia: String(f.provincia || ""), desde: typeof f.desde === "string" ? f.desde : "" }));
+}
 async function cargarSeguimiento() {
   const r = await api("/rest/v1/seguimiento?select=datos&limit=1");
   if (!r.ok) throw new Error(`No se pudo leer tu seguimiento (${r.status})`);
   const [fila] = await r.json();
   if (fila) {
-    YO.listas = fila.datos?.listas || []; YO.destinos = fila.datos?.destinos || [];
+    YO.listas = fila.datos?.listas || []; YO.destinos = fila.datos?.destinos || []; YO.favoritos = favoritosValidos(fila.datos?.favoritos);
     return;
   }
   // Cuenta sin datos todavía: se importa lo que hubiera guardado en este navegador de una versión anterior.
@@ -242,7 +263,7 @@ async function subir() {
     const usuario = datosDelToken(sesion.access_token).sub;
     const r = await api("/rest/v1/seguimiento?on_conflict=user_id", {
       metodo: "POST", prefer: "resolution=merge-duplicates,return=minimal",
-      cuerpo: { user_id: usuario, datos: { listas: YO.listas, destinos: YO.destinos }, actualizado: new Date().toISOString() },
+      cuerpo: { user_id: usuario, datos: { listas: YO.listas, destinos: YO.destinos, favoritos: YO.favoritos }, actualizado: new Date().toISOString() },
     });
     CUENTA.sync = r.ok ? "guardado" : "error";
   } catch (e) { CUENTA.sync = "error"; }
@@ -336,12 +357,13 @@ export async function entrarConCorreo(email, password) {
   return { ok: true };
 }
 /** Crea la cuenta. Con confirmación de correo (lo normal) no hay sesión hasta pulsar el enlace: { ok, sesion: false }. */
-export async function crearCuenta(email, password, codigo = "", nombre = "") {
+export async function crearCuenta(email, password, codigo = "", nombre = "", casa = "") {
   const datos = { acepta_privacidad_aragon: new Date().toISOString(), version_privacidad_aragon: VERSION_PRIVACIDAD };
   const cod = (codigo || "").trim().toUpperCase();
   if (cod) datos.codigo_invitacion_aragon = cod;      // el servidor lo aplica la primera vez que entre (mi_acceso)
   const nom = (nombre || "").trim();
   if (nom) datos.nombre_aragon = nom;                 // idem: se guarda como «mi nombre en las listas»
+  if (casa) datos.casa_aragon = casa;                 // idem: el municipio donde vive («Utebo (Zaragoza)»)
   const r = await auth("/signup", { volverA: vuelta(), cuerpo: { email, password, data: datos } });
   if (!r.ok) return r;
   olvidarCodigo(); CUENTA.invitacion = false;
@@ -396,7 +418,7 @@ export function entrarConGoogle() {
 }
 
 function vaciarDatosPersonales() {
-  YO.listas = []; YO.destinos = []; CUENTA.pase = null; CUENTA.ultimoPase = null; CUENTA.sync = "";
+  YO.listas = []; YO.destinos = []; YO.favoritos = []; CUENTA.pase = null; CUENTA.ultimoPase = null; CUENTA.sync = "";
   CUENTA.perfil = null; CUENTA.admin = false; CUENTA.verComo = null; copiaYo = null;
 }
 export async function salir() {
@@ -404,7 +426,7 @@ export async function salir() {
   fijarSesion(null); vaciarDatosPersonales(); CUENTA.recuperando = false; actualizarEstado();
   if (token) { try { await fetch(`${URL_SB}/auth/v1/logout?scope=local`, { method: "POST", headers: { apikey: cfg.supabaseAnonKey, Authorization: "Bearer " + token } }); } catch (e) { /* da igual */ } }
 }
-/** Borra el pase, la prueba, el código de invitación, el nombre, los mensajes y el seguimiento de Docentes Aragón (la cuenta, con su correo y contraseña, es compartida con otras webs y no se toca) y cierra la sesión. */
+/** Borra el pase, la prueba, el código de invitación, el nombre, el municipio, los dispositivos con avisos, los mensajes y el seguimiento (con sus favoritos) de Docentes Aragón (la cuenta, con su correo y contraseña, es compartida con otras webs y no se toca) y cierra la sesión. */
 export async function borrarMisDatos() {
   const r = await api("/rest/v1/rpc/borrar_mis_datos", { metodo: "POST", cuerpo: {} });
   if (!r.ok) throw new Error("No se pudieron borrar tus datos. Inténtalo de nuevo.");

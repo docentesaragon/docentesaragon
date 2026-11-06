@@ -184,6 +184,10 @@ alter table aragon.cuentas add column if not exists cambios_nombre int not null 
 alter table aragon.cuentas add column if not exists nombre_cambiado timestamptz;
 alter table aragon.cuentas add column if not exists busq_dia date;                              -- día de las búsquedas de abajo
 alter table aragon.cuentas add column if not exists busq_n int not null default 0;             -- búsquedas de ese día (máx. 5)
+-- Dónde vive (el municipio que elige al registrarse, p. ej. «Utebo (Zaragoza)»): solo sirve para calcular distancias en su pantalla.
+alter table aragon.cuentas add column if not exists casa text check (casa is null or char_length(casa) between 3 and 120);
+-- Qué avisos quiere recibir en la app. Hoy solo «favoritos» (nueva vacante o adjudicación en sus centros favoritos); pensado para añadir más.
+alter table aragon.cuentas add column if not exists avisos jsonb not null default '{"favoritos": true}'::jsonb check (jsonb_typeof(avisos) = 'object' and octet_length(avisos::text) <= 500);
 
 -- ---------------------------------------------------------------------
 --  Prueba gratuita (15 días) e invitaciones («invita y consigue la app gratis», como DocentsCV):
@@ -255,8 +259,8 @@ language sql stable security definer set search_path = '' as $$
 $$;
 
 -- La web la llama cada vez que alguien entra: crea la cuenta y la prueba la primera vez, aplica el código de
--- invitación con el que se registró (user_metadata.codigo_invitacion_aragon) y guarda el nombre que puso al
--- registrarse (user_metadata.nombre_aragon).
+-- invitación con el que se registró (user_metadata.codigo_invitacion_aragon) y guarda el nombre y el municipio que
+-- puso al registrarse (user_metadata.nombre_aragon y user_metadata.casa_aragon).
 create or replace function aragon.mi_acceso() returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare yo uuid := auth.uid(); nueva boolean; cod text; nom text; resultado text := null; res_nombre text := null;
@@ -268,6 +272,7 @@ begin
     if cod is not null then resultado := aragon.aplicar_codigo(yo, cod); end if;
     nom := nullif(btrim(coalesce(auth.jwt() -> 'user_metadata' ->> 'nombre_aragon', '')), '');
     if nom is not null then res_nombre := aragon.fijar_nombre(yo, nom, true); end if;
+    perform aragon.fijar_casa(yo, auth.jwt() -> 'user_metadata' ->> 'casa_aragon');
   end if;
   return jsonb_build_object('nueva', nueva, 'codigo_invitacion', resultado, 'nombre', res_nombre);
 end;
@@ -418,7 +423,8 @@ begin
 end;
 $$;
 
--- Lo que la web necesita saber de la cuenta: nombre guardado, cambios y búsquedas que le quedan, y si es administradora.
+-- Lo que la web necesita saber de la cuenta: nombre y municipio guardados, cambios y búsquedas que le quedan, avisos elegidos,
+-- cuántos dispositivos tienen avisos activados y si es administradora.
 create or replace function aragon.mi_perfil() returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare yo uuid := auth.uid(); c aragon.cuentas%rowtype;
@@ -427,7 +433,8 @@ begin
   perform aragon.asegurar_cuenta(yo);
   select * into c from aragon.cuentas where user_id = yo;
   return jsonb_build_object('nombre', c.nombre, 'cambios_restantes', greatest(0, 3 - c.cambios_nombre),
-    'busquedas_restantes', greatest(0, 5 - case when c.busq_dia = current_date then c.busq_n else 0 end), 'admin', aragon.es_admin());
+    'busquedas_restantes', greatest(0, 5 - case when c.busq_dia = current_date then c.busq_n else 0 end), 'admin', aragon.es_admin(),
+    'casa', c.casa, 'avisos', c.avisos, 'dispositivos', (select count(*) from aragon.dispositivos d where d.user_id = yo));
 end;
 $$;
 
@@ -678,7 +685,8 @@ begin
   end if;
 end $$;
 
--- Botón "Eliminar mis datos de Aragón" (derecho de supresión): borra el pase, la prueba, el código de invitación, el nombre, los mensajes y el seguimiento de la persona.
+-- Botón "Eliminar mis datos de Aragón" (derecho de supresión): borra el pase, la prueba, el código de invitación, el nombre, el municipio,
+-- los dispositivos con avisos, los mensajes y el seguimiento (con sus favoritos) de la persona.
 -- NO borra el usuario de acceso (auth.users): el proyecto de Supabase se comparte con otras webs (DocentCV) y
 -- borrarlo les quitaría también su cuenta.
 create or replace function aragon.borrar_mis_datos() returns void
@@ -687,8 +695,207 @@ begin
   if auth.uid() is null then raise exception 'No has iniciado sesión'; end if;
   delete from aragon.seguimiento where user_id = auth.uid();
   delete from aragon.mensajes    where user_id = auth.uid();
+  delete from aragon.dispositivos    where user_id = auth.uid();
+  delete from aragon.avisos_enviados where user_id = auth.uid();
   delete from aragon.pases       where user_id = auth.uid();
-  delete from aragon.cuentas     where user_id = auth.uid();   -- incluye el nombre; las personas que invitó se quedan sin "referido_por"
+  delete from aragon.cuentas     where user_id = auth.uid();   -- incluye nombre y municipio; las personas que invitó se quedan sin "referido_por"
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+--  Municipio de residencia y avisos en la app (favoritos)
+--  Los centros favoritos se guardan en «seguimiento.datos.favoritos» (lista de {cod, centro, localidad, desde}); aquí solo
+--  están los dispositivos que han aceptado avisos y lo ya avisado. El robot semanal (pipeline/avisos.py) llama a
+--  avisos_pendientes(), envía las notificaciones y las anota con avisos_marcar().
+-- ---------------------------------------------------------------------
+create table if not exists aragon.dispositivos (
+  id        bigint generated always as identity primary key,
+  user_id   uuid not null references auth.users(id) on delete cascade,
+  endpoint  text not null unique check (endpoint ~ '^https://' and char_length(endpoint) <= 600),   -- dirección del servicio de avisos del móvil
+  p256dh    text not null check (p256dh ~ '^[A-Za-z0-9_-]{80,100}$'),                              -- clave pública del dispositivo
+  auth      text not null check (auth ~ '^[A-Za-z0-9_-]{20,30}$'),                                 -- secreto del dispositivo
+  creado    timestamptz not null default now()
+);
+create index if not exists dispositivos_user_idx on aragon.dispositivos (user_id);
+
+create table if not exists aragon.avisos_enviados (
+  user_id  uuid not null references auth.users(id) on delete cascade,
+  clave    text not null,                                   -- acto|centro|tipo: así no se avisa dos veces de lo mismo
+  enviado  timestamptz not null default now(),
+  primary key (user_id, clave)
+);
+
+-- Guarda el municipio de una cuenta (uso interno). Devuelve ok | invalido. Texto vacío = quitarlo.
+create or replace function aragon.fijar_casa(p_yo uuid, p_casa text) returns text
+language plpgsql volatile security definer set search_path = '' as $$
+declare v text := btrim(regexp_replace(coalesce(p_casa, ''), '\s+', ' ', 'g'));
+begin
+  if v <> '' and (char_length(v) < 3 or char_length(v) > 120 or v ~ '[\x00-\x1f<>]') then return 'invalido'; end if;
+  perform aragon.asegurar_cuenta(p_yo);
+  update aragon.cuentas set casa = nullif(v, '') where user_id = p_yo;
+  return 'ok';
+end;
+$$;
+
+-- «Mi municipio»: guarda el de la persona que hace la consulta. { estado: ok | invalido }
+create or replace function aragon.guardar_casa(p_casa text) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then raise exception 'No has iniciado sesión'; end if;
+  return jsonb_build_object('estado', aragon.fijar_casa(auth.uid(), p_casa));
+end;
+$$;
+
+-- Qué avisos quiere. Solo se aceptan las claves conocidas (hoy: favoritos) y con valor verdadero/falso. Devuelve los avisos guardados.
+create or replace function aragon.guardar_avisos(p_avisos jsonb) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare yo uuid := auth.uid(); actual jsonb;
+begin
+  if yo is null then raise exception 'No has iniciado sesión'; end if;
+  perform aragon.asegurar_cuenta(yo);
+  select avisos into actual from aragon.cuentas where user_id = yo;
+  if jsonb_typeof(p_avisos) = 'object' and jsonb_typeof(p_avisos -> 'favoritos') = 'boolean' then
+    actual := actual || jsonb_build_object('favoritos', (p_avisos ->> 'favoritos')::boolean);
+  end if;
+  update aragon.cuentas set avisos = actual where user_id = yo;
+  return actual;
+end;
+$$;
+
+-- El navegador de la persona acepta avisos: guarda su dirección y sus claves (máx. 5 dispositivos por cuenta). { estado: ok | invalido }
+create or replace function aragon.guardar_dispositivo(p_endpoint text, p_p256dh text, p_auth text) returns jsonb
+language plpgsql volatile security definer set search_path = '' as $$
+declare yo uuid := auth.uid();
+begin
+  if yo is null then raise exception 'No has iniciado sesión'; end if;
+  if coalesce(p_endpoint, '') !~ '^https://' or char_length(p_endpoint) > 600 or coalesce(p_p256dh, '') !~ '^[A-Za-z0-9_-]{80,100}$'
+     or coalesce(p_auth, '') !~ '^[A-Za-z0-9_-]{20,30}$' then
+    return jsonb_build_object('estado', 'invalido');
+  end if;
+  perform aragon.asegurar_cuenta(yo);
+  -- el mismo navegador con otra cuenta: pasa a esta
+  insert into aragon.dispositivos (user_id, endpoint, p256dh, auth) values (yo, p_endpoint, p_p256dh, p_auth)
+  on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, creado = now();
+  delete from aragon.dispositivos where user_id = yo and id not in (select id from aragon.dispositivos where user_id = yo order by creado desc, id desc limit 5);
+  return jsonb_build_object('estado', 'ok');
+end;
+$$;
+
+-- Quita un dispositivo de los avisos (solo uno de la propia cuenta).
+create or replace function aragon.quitar_dispositivo(p_endpoint text) returns void
+language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then raise exception 'No has iniciado sesión'; end if;
+  delete from aragon.dispositivos where user_id = auth.uid() and endpoint = p_endpoint;
+end;
+$$;
+
+-- Fecha escrita por una persona -> fecha, o null si no vale (el robot nunca debe fallar por lo que haya en un seguimiento).
+create or replace function aragon.fecha_segura(p_texto text) returns date
+language plpgsql immutable set search_path = '' as $$
+begin
+  if p_texto is null or p_texto !~ '^\d{4}-\d\d-\d\d$' then return null; end if;
+  return p_texto::date;
+exception when others then
+  return null;
+end;
+$$;
+
+-- ¿Tiene esa cuenta un pase en vigor? (como tiene_pase(), pero para el robot, que no es ninguna persona conectada)
+create or replace function aragon.pase_de(p_user uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from auth.users u join aragon.admins a on a.email = lower(u.email)
+    where u.id = p_user and u.email_confirmed_at is not null
+  ) or exists (
+    select 1 from aragon.pases p where p.user_id = p_user and p.estado = 'activo' and p.expira >= current_date
+  );
+$$;
+
+-- Lo que hay que avisar ahora: por cada cuenta con pase, avisos de favoritos activados y algún dispositivo, las novedades de sus
+-- centros favoritos que aún no se le han avisado:
+--   ofertada   = hay una vacante nueva en el centro (sale la oferta)      adjudicada = se ha adjudicado una vacante del centro
+-- Solo cuenta lo publicado en los últimos 10 días y desde el día en que la persona marcó el favorito.
+-- [{ user_id, dispositivos: [{endpoint, p256dh, auth}], avisos: [{clave, tipo, acto, centro_cod, centro, localidad, n, esp: [nombres]}] }]
+create or replace function aragon.avisos_pendientes() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  with fav as (
+    select s.user_id, f.cod, coalesce(f.desde, current_date - 10) as desde
+    from aragon.seguimiento s
+    join aragon.cuentas c on c.user_id = s.user_id and c.avisos @> '{"favoritos": true}'::jsonb
+    cross join lateral (
+      select e.value ->> 'cod' as cod, aragon.fecha_segura(e.value ->> 'desde') as desde
+      from jsonb_array_elements(case when jsonb_typeof(s.datos -> 'favoritos') = 'array' then s.datos -> 'favoritos' else '[]'::jsonb end) with ordinality as e(value, n)
+      where e.n <= 100 and jsonb_typeof(e.value) = 'object' and coalesce(e.value ->> 'cod', '') <> ''
+    ) f
+    where exists (select 1 from aragon.dispositivos d where d.user_id = s.user_id) and aragon.pase_de(s.user_id)
+  ),
+  ev as (
+    select f.user_id, v.acto, v.centro_cod, v.estado as tipo, max(v.centro) as centro, max(v.localidad) as localidad, count(*) as n,
+           array_agg(distinct coalesce(e.nombre, v.esp)) as esp
+    from fav f
+    join aragon.vacantes v on v.centro_cod = f.cod and v.estado in ('ofertada', 'adjudicada')
+    join aragon.actos a on a.acto = v.acto
+    left join aragon.especialidades e on e.cuerpo_cod = v.cuerpo_cod and e.cod = v.esp
+    where case v.estado when 'ofertada' then a.fecha_oferta else a.fecha_adjudicacion end
+          between greatest(f.desde, current_date - 10) and current_date
+    group by f.user_id, v.acto, v.centro_cod, v.estado
+  ),
+  nuevo as (
+    select ev.* , ev.acto || '|' || ev.centro_cod || '|' || ev.tipo as clave
+    from ev where not exists (select 1 from aragon.avisos_enviados x where x.user_id = ev.user_id and x.clave = ev.acto || '|' || ev.centro_cod || '|' || ev.tipo)
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'user_id', u.user_id,
+      'dispositivos', (select jsonb_agg(jsonb_build_object('endpoint', d.endpoint, 'p256dh', d.p256dh, 'auth', d.auth)) from aragon.dispositivos d where d.user_id = u.user_id),
+      'avisos', u.avisos)), '[]'::jsonb)
+  from (
+    select n.user_id, jsonb_agg(jsonb_build_object('clave', n.clave, 'tipo', n.tipo, 'acto', n.acto, 'centro_cod', n.centro_cod, 'centro', n.centro,
+                                                   'localidad', n.localidad, 'n', n.n, 'esp', to_jsonb(n.esp)) order by n.centro, n.tipo) as avisos
+    from nuevo n group by n.user_id
+  ) u;
+$$;
+
+-- El robot anota lo que ya ha avisado (y limpia lo antiguo).
+create or replace function aragon.avisos_marcar(p_user uuid, p_claves text[]) returns void
+language plpgsql volatile security definer set search_path = '' as $$
+begin
+  insert into aragon.avisos_enviados (user_id, clave) select p_user, unnest(p_claves) on conflict do nothing;
+  delete from aragon.avisos_enviados where enviado < now() - interval '120 days';
+end;
+$$;
+
+-- El robot quita los dispositivos que el servicio de avisos da por muertos (app desinstalada, permiso retirado).
+create or replace function aragon.avisos_quitar(p_endpoints text[]) returns void
+language sql volatile security definer set search_path = '' as $$
+  delete from aragon.dispositivos where endpoint = any(p_endpoints);
+$$;
+
+-- Claves del servicio de avisos (VAPID). Las crea el robot la primera vez que envía avisos y las guarda aquí; la web solo
+-- puede leer la clave PÚBLICA (la necesita el navegador para aceptar avisos). La privada no sale de esta tabla.
+create table if not exists aragon.servidor (
+  clave  text primary key,
+  valor  text not null
+);
+
+create or replace function aragon.vapid_publica() returns text
+language sql stable security definer set search_path = '' as $$
+  select valor from aragon.servidor where clave = 'vapid_publica';
+$$;
+
+create or replace function aragon.vapid_claves() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('publica', (select valor from aragon.servidor where clave = 'vapid_publica'),
+                            'privada', (select valor from aragon.servidor where clave = 'vapid_privada'))
+  where exists (select 1 from aragon.servidor where clave = 'vapid_publica') and exists (select 1 from aragon.servidor where clave = 'vapid_privada');
+$$;
+
+-- Guarda las claves solo si todavía no hay (así dos robots a la vez nunca las pisan).
+create or replace function aragon.vapid_guardar(p_publica text, p_privada text) returns void
+language plpgsql volatile security definer set search_path = '' as $$
+begin
+  if p_publica is null or p_privada is null or p_publica !~ '^[A-Za-z0-9_-]{80,100}$' or p_privada !~ '^[A-Za-z0-9_-]{40,50}$' then raise exception 'Claves no válidas'; end if;
+  insert into aragon.servidor (clave, valor) values ('vapid_publica', p_publica), ('vapid_privada', p_privada) on conflict do nothing;
 end;
 $$;
 
@@ -702,11 +909,14 @@ comment on table aragon.vacantes       is 'Una fila por vacante ofertada y su es
 comment on table aragon.ultimo_llamado is 'Hasta dónde llegó la lista en cada especialidad y semana';
 comment on table aragon.keepalive      is 'La toca un robot dos veces por semana para que Supabase no pause el proyecto';
 comment on table aragon.pases          is 'Accesos a Mi seguimiento: compra (caduca el 30/06), prueba de 15 días, app gratis por invitaciones o regalo manual. Solo lo escriben las funciones del servidor';
-comment on table aragon.cuentas        is 'Quién ha entrado en Docentes Aragón: inicio de la prueba de 15 días, código de invitación, quién la invitó y el nombre que puso para buscar sus listas';
+comment on table aragon.cuentas        is 'Quién ha entrado en Docentes Aragón: inicio de la prueba de 15 días, código de invitación, quién la invitó, el nombre que puso para buscar sus listas, su municipio y los avisos que quiere';
 comment on table aragon.seguimiento    is 'Posición en listas y destinos de cada persona. Privado: solo su dueña y solo con pase en vigor';
 comment on table aragon.admins         is 'Correos con acceso a la administración de la web';
 comment on table aragon.personas       is 'PRIVADA. Candidatos de los listados del curso (nombre normalizado, DNI parcial y posición en cada lista). Solo la leen las funciones buscar_mis_listas y el robot';
 comment on table aragon.personas_excluidas is 'PRIVADA. Personas que han pedido no salir en la búsqueda por nombre: cargar_personas las salta y las borra';
+comment on table aragon.dispositivos   is 'PRIVADA. Navegadores/móviles que han aceptado avisos en la app (dirección y claves del servicio de avisos). Solo las funciones del servidor y el robot';
+comment on table aragon.avisos_enviados is 'PRIVADA. Qué avisos de favoritos ya se enviaron a cada cuenta, para no repetirlos';
+comment on table aragon.servidor        is 'PRIVADA. Claves del servicio de avisos (VAPID). La web solo lee la pública con vapid_publica(); la privada la usa el robot';
 comment on table aragon.mensajes       is 'Sugerencias y reclamaciones que envía la gente desde Ajustes';
 comment on table aragon.admin_log      is 'Registro de lo que hace el administrador sobre cuentas de otras personas (ver como, regalar pase, corregir nombre...)';
 
@@ -728,6 +938,9 @@ alter table aragon.cuentas        enable row level security;
 alter table aragon.admins         enable row level security;   -- sin políticas: solo las funciones del servidor
 alter table aragon.personas       enable row level security;   -- sin políticas: solo las funciones del servidor
 alter table aragon.personas_excluidas enable row level security;   -- sin políticas: solo el panel de Supabase y el robot
+alter table aragon.servidor       enable row level security;   -- sin políticas: solo las funciones del servidor y el robot
+alter table aragon.dispositivos   enable row level security;   -- sin políticas: solo las funciones del servidor y el robot
+alter table aragon.avisos_enviados enable row level security;   -- sin políticas: solo las funciones del servidor y el robot
 alter table aragon.mensajes       enable row level security;
 alter table aragon.admin_log      enable row level security;   -- sin políticas: solo se lee desde el panel de Supabase
 
@@ -773,9 +986,14 @@ grant select, insert, update, delete on aragon.seguimiento to authenticated;
 
 -- Funciones que puede llamar quien ha iniciado sesión (desde la web)...
 revoke all on function aragon.tiene_pase(), aragon.es_admin(), aragon.borrar_mis_datos(), aragon.mi_acceso(), aragon.usar_codigo(text), aragon.mi_referidos(),
-                       aragon.mi_perfil(), aragon.guardar_nombre(text), aragon.buscar_mis_listas(text), aragon.enviar_mensaje(text, text) from public, anon;
+                       aragon.mi_perfil(), aragon.guardar_nombre(text), aragon.buscar_mis_listas(text), aragon.enviar_mensaje(text, text),
+                       aragon.guardar_casa(text), aragon.guardar_avisos(jsonb), aragon.guardar_dispositivo(text, text, text), aragon.quitar_dispositivo(text) from public, anon;
+-- ...la clave pública de los avisos la puede leer cualquiera (el navegador la necesita para aceptar avisos)...
+revoke all on function aragon.vapid_publica() from public;
+grant execute on function aragon.vapid_publica() to anon, authenticated, service_role;
 grant execute on function aragon.tiene_pase(), aragon.es_admin(), aragon.borrar_mis_datos(), aragon.mi_acceso(), aragon.usar_codigo(text), aragon.mi_referidos(),
-                          aragon.mi_perfil(), aragon.guardar_nombre(text), aragon.buscar_mis_listas(text), aragon.enviar_mensaje(text, text) to authenticated, service_role;
+                          aragon.mi_perfil(), aragon.guardar_nombre(text), aragon.buscar_mis_listas(text), aragon.enviar_mensaje(text, text),
+                          aragon.guardar_casa(text), aragon.guardar_avisos(jsonb), aragon.guardar_dispositivo(text, text, text), aragon.quitar_dispositivo(text) to authenticated, service_role;
 -- ...las de administración (comprueban por dentro que quien llama es administrador)...
 revoke all on function aragon.admin_usuarios(text, int, int), aragon.admin_resumen(), aragon.admin_embudo(), aragon.admin_pruebas_terminadas(int),
                        aragon.admin_accion(uuid, text, text), aragon.admin_ver_seguimiento(uuid), aragon.admin_mensajes(text), aragon.admin_responder(bigint, text, text) from public, anon;
@@ -784,7 +1002,9 @@ grant execute on function aragon.admin_usuarios(text, int, int), aragon.admin_re
 -- ...y las internas, que solo usan otras funciones o el servidor.
 revoke all on function aragon.curso_de(date), aragon.nuevo_codigo(), aragon.asegurar_cuenta(uuid), aragon.aplicar_codigo(uuid, text),
                        aragon.invitados_que_pagaron(uuid, text), aragon.premiar_invitaciones(), aragon.clave_nombre(text), aragon.fijar_nombre(uuid, text, boolean),
-                       aragon.cargar_personas(text, jsonb), aragon.exigir_admin() from public, anon, authenticated;
+                       aragon.cargar_personas(text, jsonb), aragon.exigir_admin(), aragon.fijar_casa(uuid, text), aragon.fecha_segura(text), aragon.pase_de(uuid),
+                       aragon.avisos_pendientes(), aragon.avisos_marcar(uuid, text[]), aragon.avisos_quitar(text[]), aragon.vapid_claves(), aragon.vapid_guardar(text, text) from public, anon, authenticated;
 grant execute on function aragon.curso_de(date), aragon.nuevo_codigo(), aragon.asegurar_cuenta(uuid), aragon.aplicar_codigo(uuid, text),
                           aragon.invitados_que_pagaron(uuid, text), aragon.premiar_invitaciones(), aragon.clave_nombre(text), aragon.fijar_nombre(uuid, text, boolean),
-                          aragon.cargar_personas(text, jsonb), aragon.exigir_admin() to service_role;
+                          aragon.cargar_personas(text, jsonb), aragon.exigir_admin(), aragon.fijar_casa(uuid, text), aragon.fecha_segura(text), aragon.pase_de(uuid),
+                          aragon.avisos_pendientes(), aragon.avisos_marcar(uuid, text[]), aragon.avisos_quitar(text[]), aragon.vapid_claves(), aragon.vapid_guardar(text, text) to service_role;

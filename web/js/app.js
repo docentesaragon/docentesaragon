@@ -10,6 +10,7 @@ import { yo } from "./yo.js";
 import { ajustes } from "./ajustes.js";
 import { admin } from "./admin.js";
 import { iniciarCuenta, CUENTA, salirVerComo } from "./cuenta.js";
+import { registrarSW, resincronizarAvisos } from "./avisos.js";
 
 const VISTAS = { semana, historico, vacantes, mapa, yo, ajustes, admin };
 const NECESITA_VACANTES = new Set(["vacantes", "mapa", "yo"]);
@@ -57,6 +58,7 @@ async function arrancar() {
   }
   D.curso = D.cursos[0];
   await iniciarCuenta();   // si volvemos de Google, recoge la sesión; carga el pase y el seguimiento
+  registrarSW().then(resincronizarAvisos);   // avisos de la app: service worker y, si este dispositivo ya los tenía, recordárselo a la cuenta
   if (D.aviso) { const a = document.getElementById("aviso-datos"); a.textContent = D.aviso; a.hidden = false; }
   document.getElementById("pie-actualizado").textContent = `Datos hasta la oferta del ${fmtLarga(D.actos[0]?.fecha_oferta)}${D.modo === "estatico" ? " (copia guardada en la web)" : ""}.`;
   window.addEventListener("hashchange", pintar);

@@ -148,3 +148,13 @@ select (select count(*) from aragon.cuentas where nombre is not null) as cuentas
 insert into aragon.personas_excluidas (clave, nif) values (aragon.clave_nombre('APELLIDOS, NOMBRE'), '') on conflict do nothing;
 delete from aragon.personas p using aragon.personas_excluidas x where p.clave = x.clave and (x.nif = '' or x.nif = p.nif);
 -- Para volver a incluirla:  delete from aragon.personas_excluidas where clave = aragon.clave_nombre('APELLIDOS, NOMBRE');
+
+
+-- =====================================================================
+-- 16. Avisos en la app: cuánta gente tiene dispositivos con avisos, municipio puesto, favoritos y últimos avisos enviados (sin datos personales)
+-- =====================================================================
+select (select count(distinct user_id) from aragon.dispositivos) as cuentas_con_avisos,
+       (select count(*) from aragon.dispositivos) as dispositivos,
+       (select count(*) from aragon.cuentas where casa is not null) as cuentas_con_municipio,
+       (select count(*) from aragon.seguimiento where jsonb_typeof(datos -> 'favoritos') = 'array' and jsonb_array_length(datos -> 'favoritos') > 0) as cuentas_con_favoritos,
+       (select count(*) from aragon.avisos_enviados where enviado > now() - interval '7 days') as avisos_ultimos_7_dias;

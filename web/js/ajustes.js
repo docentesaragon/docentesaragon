@@ -1,7 +1,9 @@
 // «Ajustes y avisos» (se llega desde Mi seguimiento > Ajustes). Todas las cuentas ven lo mismo; la administradora ve además su bloque rojo.
 import { h, llenar, fmtDMA } from "./util.js";
 import { YO, guardarYo } from "./datos.js";
-import { CUENTA, salir, borrarMisDatos, guardarNombre, ERRORES_NOMBRE, nombreValido, enviarMensaje, misMensajes, TEXTO_SYNC } from "./cuenta.js";
+import { CUENTA, salir, borrarMisDatos, guardarNombre, ERRORES_NOMBRE, nombreValido, enviarMensaje, misMensajes, TEXTO_SYNC, guardarAvisos, puedeSeguir } from "./cuenta.js";
+import { bloqueCasa } from "./casa.js";
+import { estadoDispositivo, activarAvisos, desactivarAvisos } from "./avisos.js";
 import { bloqueInvitar, textoPase } from "./yo.js";
 import { ir } from "./ruta.js";
 
@@ -21,7 +23,7 @@ export function ajustes(raiz) {
       h("h2", null, "Ajustes y avisos"),
       h("p", null, h("a", { id: "aj-volver", href: "#/yo" }, "← Volver a Mi seguimiento"))),
     bloqueCuenta(raiz),
-    bloqueAvisos(),
+    bloqueAvisos(raiz),
     bloqueInvitar(),
     bloqueMensajes(),
     CUENTA.admin ? bloqueAdmin() : null,
@@ -57,13 +59,48 @@ function bloqueCuenta(raiz) {
     h("h3", null, "Mi cuenta"),
     h("p", null, "Correo: ", h("strong", { id: "aj-email" }, CUENTA.email || "tu cuenta")),
     h("p", null, "Acceso: ", CUENTA.pase ? h("span", { class: "chip oro", id: "aj-pase" }, textoPase()) : h("span", { class: "tenue", id: "aj-pase" }, "sin pase en vigor")),
-    nombre);
+    nombre,
+    bloqueCasa({ solo: true }));
 }
 
-function bloqueAvisos() {
+const ERRORES_AVISOS = {
+  no_soportado: "Este navegador no puede recibir avisos. En el móvil, usa la app de Docentes Aragón o Chrome.",
+  denegado: "No has dado permiso para las notificaciones. Si quieres recibirlas, permítelas en los ajustes del navegador o de la app y vuelve a pulsar el botón.",
+  sin_clave: "Los avisos todavía no están listos en el servidor. Se activan en cuanto se ejecuta la próxima actualización semanal; inténtalo mañana.",
+  error: "No se han podido activar los avisos. Inténtalo de nuevo.",
+};
+let mensajeAvisos = "";
+
+function bloqueAvisos(raiz) {
+  const perfil = CUENTA.perfil || {}, avisos = perfil.avisos || {}, n = perfil.dispositivos || 0;
+  const cuerpo = h("div", { id: "aj-avisos-cuerpo" }, h("p", { class: "tenue", role: "status" }, "Comprobando este dispositivo…"));
+  const msg = h("p", { class: "tenue peq", id: "avisos-msg", role: "status" }, mensajeAvisos); mensajeAvisos = "";    // el mensaje se enseña una sola vez
+  estadoDispositivo().then((d) => {
+    const boton = (texto, id, f) => h("button", { type: "button", class: "boton", id, onclick: async (e) => { e.target.disabled = true; await f(); ajustes(raiz); } }, texto);
+    llenar(cuerpo,
+      !d.soportado ? h("p", { id: "avisos-estado-disp" }, ERRORES_AVISOS.no_soportado)
+        : d.suscrito && d.permiso === "granted"
+          ? [h("p", { id: "avisos-estado-disp" }, h("span", { class: "chip oro" }, "Activados en este dispositivo")),
+            h("div", { class: "campos" }, h("button", { type: "button", class: "boton sec", id: "avisos-desactivar", onclick: async (e) => { e.target.disabled = true; await desactivarAvisos(); mensajeAvisos = "Avisos desactivados en este dispositivo."; ajustes(raiz); } }, "Desactivar en este dispositivo"))]
+          : d.permiso === "denied" ? h("p", { id: "avisos-estado-disp" }, ERRORES_AVISOS.denegado)
+            : [h("p", { id: "avisos-estado-disp" }, "En este dispositivo todavía no recibes avisos."),
+              h("div", { class: "campos" }, boton("Activar avisos en este dispositivo", "avisos-activar", async () => { const r = await activarAvisos(); mensajeAvisos = r === "ok" ? "Avisos activados en este dispositivo." : ERRORES_AVISOS[r] || ERRORES_AVISOS.error; }))]);
+  });
   return h("div", { class: "bloque", id: "aj-avisos" },
-    h("h3", null, "Avisos"),
-    h("p", null, "Todavía no hay avisos. Estamos preparando avisos en la app de Android para cuando se publique una adjudicación que te afecte (por ejemplo, que la lista llegue a tu posición)."),
+    h("h3", null, "Avisos en la app"),
+    h("p", null, "Te avisamos cuando se publica una vacante nueva o se adjudica una vacante en alguno de tus centros favoritos (la estrella de cada fila en Vacantes)."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", id: "avisos-favoritos", checked: avisos.favoritos !== false, onchange: async (e) => {
+      const hecho = await guardarAvisos({ favoritos: e.target.checked });
+      mensajeAvisos = hecho ? (e.target.checked ? "Avisos de favoritos activados." : "Avisos de favoritos desactivados.") : "No se pudo guardar. Inténtalo de nuevo.";
+      ajustes(raiz);
+    } }), "Vacantes y adjudicaciones en mis centros favoritos"),
+    cuerpo,
+    msg,
+    h("p", { class: "tenue peq", id: "avisos-info" },
+      n ? `Tu cuenta tiene avisos activados en ${n === 1 ? "1 dispositivo" : n + " dispositivos"}. ` : "",
+      "Los avisos se envían una vez cada día laborable por la tarde, cuando se actualizan los datos. ",
+      puedeSeguir() ? "" : "Para recibirlos necesitas tu prueba gratuita o un pase en vigor. ",
+      "Más adelante añadiremos avisos de tu especialidad."),
     h("p", { class: "tenue peq" }, "No enviamos avisos por correo: el correo solo se usa para entrar en tu cuenta."));
 }
 

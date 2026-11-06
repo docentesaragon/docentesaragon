@@ -91,13 +91,13 @@ export const cuerpoDeCod = (cod) => (esMaestros(cod) ? "maestros" : "secundaria"
 
 // ---------- datos personales ----------
 // Modo de prueba (sin Supabase): todo se guarda en este navegador.
-// Modo cuenta: listas y destinos viven en la cuenta (js/cuenta.js); en el navegador solo queda una preferencia sin datos personales (maestros/secundaria).
+// Modo cuenta: listas, destinos y centros favoritos viven en la cuenta (js/cuenta.js); en el navegador solo queda una preferencia sin datos personales (maestros/secundaria).
 const CLAVE_YO = "docentes-aragon:v1";
 const CLAVE_PREF = "docentes-aragon:pref";
 export const YO = MODO_CUENTA
-  ? { listas: [], destinos: [], cuerpo: leerLocal(CLAVE_PREF, {}).cuerpo || "maestros" }
-  : leerLocal(CLAVE_YO, { listas: [], destinos: [], cuerpo: "maestros" });
-YO.listas ||= []; YO.destinos ||= []; YO.cuerpo ||= "maestros";
+  ? { listas: [], destinos: [], favoritos: [], cuerpo: leerLocal(CLAVE_PREF, {}).cuerpo || "maestros" }
+  : leerLocal(CLAVE_YO, { listas: [], destinos: [], favoritos: [], cuerpo: "maestros" });
+YO.listas ||= []; YO.destinos ||= []; YO.favoritos ||= []; YO.cuerpo ||= "maestros";
 export const enlace = { alGuardar: null };                    // cuenta.js lo rellena para sincronizar
 export function guardarYo() {
   if (!MODO_CUENTA) { guardarLocal(CLAVE_YO, YO); return; }

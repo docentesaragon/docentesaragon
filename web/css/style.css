@@ -280,3 +280,34 @@ a.boton.solo-admin { color: var(--rojo); }
 .barra-embudo span { display: block; height: 100%; background: var(--rojo); border-radius: 7px; }
 .pdfs { list-style: none; padding: 0; margin: .4rem 0; }
 .pdfs li { padding: .3rem 0; border-top: 1px solid var(--linea); }
+
+/* ---------- v3: mapa y favorito en Vacantes, municipio, distancia, avisos ---------- */
+.solo-lector { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.datos td.acciones-fila { white-space: nowrap; width: 1%; }
+.datos td.acciones-fila .icono-boton + .icono-boton { margin-left: .25rem; }
+/* En el móvil la tabla se desplaza hacia los lados: los botones se quedan pegados a la derecha para no tener que buscarlos */
+@media (max-width: 720px) {
+  #tabla-vacantes th:last-child, .datos td.acciones-fila { position: sticky; right: 0; background: var(--panel); box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .25); }
+}
+.icono-boton { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; background: var(--panel); color: var(--tinta-2); border: 1px solid var(--linea); border-radius: var(--radio); cursor: pointer; vertical-align: middle; }
+.icono-boton:hover { border-color: var(--pirineo); color: var(--pirineo); }
+.icono-boton.mapa { color: var(--pirineo); }
+.icono-boton.favorito.activo { color: #8a6200; background: var(--oro-fondo); border-color: var(--oro); }
+@media (prefers-color-scheme: dark) { :root:not([data-tema="claro"]) .icono-boton.favorito.activo { color: var(--oro); } }
+:root[data-tema="oscuro"] .icono-boton.favorito.activo { color: var(--oro); }
+.aviso-fav { background: var(--oro-fondo); border: 1px solid var(--oro); border-radius: var(--radio); padding: .5rem .8rem; margin: .5rem 0 0; max-width: none; }
+
+.selector-municipio { position: relative; display: grid; gap: .2rem; }
+.selector-municipio input { width: 100%; }
+.sugerencias { position: absolute; z-index: 20; top: 2.6rem; left: 0; right: 0; margin: 0; padding: .25rem 0; list-style: none; background: var(--panel); border: 1px solid var(--linea); border-radius: var(--radio); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); max-height: 16rem; overflow-y: auto; }
+.sugerencias li { padding: .5rem .8rem; cursor: pointer; color: var(--tinta); font-size: .95rem; }
+.sugerencias li:hover, .sugerencias li.activa { background: var(--oro-fondo); }
+.selector-municipio .peq { min-height: 1.1rem; }
+
+.bloque.lugar { border-left: 4px solid var(--pirineo); }
+.distancia { font-size: 1.1rem; margin: .25rem 0; }
+.distancia strong { font-size: 2rem; color: var(--rojo); margin-right: .15rem; }
+.favoritos { list-style: none; margin: 0 0 .75rem; padding: 0; }
+.favoritos li { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; justify-content: space-between; padding: .5rem 0; border-top: 1px solid var(--linea); }
+.favoritos li:first-child { border-top: 0; }
+.fav-acciones { display: flex; flex-wrap: wrap; gap: 0 .6rem; }

@@ -9,6 +9,7 @@ Requisitos: Python 3.9+, pypdf (pip install pypdf) y pdftotext/pdfinfo de Popple
 Los PDF (con nombres de personas) se guardan en una carpeta temporal y NO se suben a ningún sitio.
 Con --subir, además:
   · lee los PDF que el administrador haya subido desde la web (bucket privado «aragon-pdf») y los borra al terminar;
+  · envía los avisos de la app a quien tenga centros favoritos con novedades (avisos.py; necesita «pip install cryptography»);
   · guarda en una tabla PRIVADA de Supabase los candidatos del curso (nombre normalizado y puesto en la lista), para que cada
     persona pueda encontrar sus listas escribiendo su nombre. Esa tabla no la puede leer la web.
 """
@@ -67,6 +68,9 @@ def main():
         if r.returncode:
             sys.exit("Fallo al subir a Supabase.")
         subidos.borrar(subidos_admin)     # ya procesados: fuera del bucket
+        # Avisos en la app (vacantes nuevas y adjudicaciones en los centros favoritos). Si falla no se para nada: se reintenta en la siguiente ejecución.
+        if ejecutar([os.path.join(AQUI, "avisos.py")]).returncode:
+            print("AVISO: no se han podido enviar los avisos de la app (los datos sí se han subido). Se reintentará en la próxima ejecución.")
     else:
         print("JSON en", salida, "(usa --subir para enviarlos a Supabase)")
     if not a.pdfs:

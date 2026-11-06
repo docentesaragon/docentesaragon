@@ -8,6 +8,9 @@ import { productoActual, cursoDeProducto, compraDisponible, precioEnPlay, compra
 import { situacion, nombreEspBonito } from "./comun.js";
 import { filtrar } from "./vacantes.js";
 import { ir } from "./ruta.js";
+import { bloqueCasa } from "./casa.js";
+import { cargarMunicipios, km, textoKm, coordsLocalidad, enlacesRuta, selectorMunicipio } from "./distancia.js";
+import { esFavorito, alternarFavorito, quitarFavorito } from "./favoritos.js";
 
 const URL_PADDOC = "https://aplicaciones.aragon.es/epdtp/welcome";     // solicitud de destinos de Educaragón
 const borrador = { cuerpo_cod: "0597", esp: "", lista: "1", fecha: "", bloque: "", orden: "" };
@@ -16,8 +19,12 @@ let verCompra = false;     // true si quien está en prueba (o ya tiene pase) ha
 let manualAbierto = false; // «Añadir mi posición a mano» desplegado
 let busqueda = null;       // resultado de la última búsqueda por nombre: { estado, listas?, restantes? }
 let buscando = false, editandoNombre = false;
+let lugarActual = null;    // centro o localidad cuya distancia se está mirando: { localidad, centro, cod, provincia } (llega con #/yo?lugar=...)
 
-export function yo(raiz, params = {}) {
+export function yo(raiz, params) {
+  if (params) {      // llega desde la dirección (no es un repintado interno): la tarjeta de distancia solo sale si se pide
+    lugarActual = params.lugar ? { localidad: params.lugar, centro: params.centro || "", cod: params.cod || "", provincia: params.prov || "" } : null;
+  } else params = {};
   if (params.manual === "1") manualAbierto = true;
   if (!CUENTA.activa) return seguimiento(raiz);               // modo de prueba, sin cuenta
   if (CUENTA.recuperando && CUENTA.estado !== "anonimo") return pantallaEntrada(raiz, "nueva");   // llegó desde el enlace de «he olvidado mi contraseña»
@@ -69,9 +76,10 @@ function seguimiento(raiz) {
         : "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que escribas aquí se guarda solo en este navegador: no se envía a ningún sitio y la web no te pide nombre ni DNI."),
       h("p", { class: "tenue peq" }, "«Ir a PADDOC» abre en otra pestaña la web oficial de Educaragón donde se hace la solicitud de destinos.")),
     CUENTA.activa ? [mensajeCuenta(), barraCuenta(raiz), avisoDeAcceso(raiz)] : null,
+    lugarActual && !ro ? bloqueLugar(raiz) : null,
     CUENTA.activa && !ro ? bloqueBuscar(raiz) : null,
     ro ? null : manual,
-    h("div", { class: "dos-col" }, h("div", null, seguimientos.length ? seguimientos : h("p", { class: "vacio", id: "sin-listas" }, "Todavía no has añadido ninguna lista.")), h("div", null, destinos(raiz, ro))),
+    h("div", { class: "dos-col" }, h("div", null, seguimientos.length ? seguimientos : h("p", { class: "vacio", id: "sin-listas" }, "Todavía no has añadido ninguna lista.")), h("div", null, CUENTA.activa && !ro ? bloqueCasa({ alCambiar: () => yo(raiz) }) : null, bloqueFavoritos(raiz, ro), destinos(raiz, ro))),
     CUENTA.activa ? h("p", { class: "tenue peq", id: "sync-estado", role: "status" }, TEXTO_SYNC[CUENTA.sync] || "") : borrado(raiz));
 }
 
@@ -187,6 +195,74 @@ function bloqueLista(l, raiz, ro = false) {
     h("p", { class: "tenue peq" }, "Orientativo: depende de quién estuviera disponible cada semana y de las vacantes que hubiera en las provincias que tú pidieras."));
 }
 
+// ---------- distancia desde tu casa a un centro (botón «mapa» de Vacantes) ----------
+function bloqueLugar(raiz) {
+  const L = lugarActual, casa = CUENTA.perfil?.casa || "";
+  const nombre = L.centro ? centroBonito(L.centro) : localidadBonita(L.localidad);
+  const hasta = coordsLocalidad(L.localidad);
+  const cuerpo = h("div", { id: "lugar-cuerpo" }, h("p", { class: "tenue", role: "status" }, "Calculando la distancia…"));
+  const objetivo = { centro_cod: L.cod, centro: L.centro, localidad: L.localidad, provincia: L.provincia };
+  const fav = L.cod ? esFavorito(L.cod) : false;
+  const cerrar = () => { lugarActual = null; history.replaceState(null, "", location.pathname + location.search + "#/yo"); yo(raiz); };
+
+  if (!CUENTA.activa) {
+    llenar(cuerpo, h("p", { class: "tenue" }, "Para calcular la distancia desde tu casa hace falta una cuenta (el municipio se guarda en ella)."));
+  } else if (!casa) {
+    llenar(cuerpo, h("p", null, "Elige el municipio donde vives y te decimos a cuántos kilómetros en línea recta está."), bloqueCasa({ solo: true, empezarEditando: true, alCambiar: () => yo(raiz) }));
+  } else {
+    cargarMunicipios().then((datos) => {
+      const m = datos.porClave.get(casa), desde = m ? { lat: m.lat, lon: m.lon } : null;
+      const rutas = enlacesRuta({ casa, centro: L.centro || L.localidad, localidad: L.localidad, provincia: L.provincia }, desde, hasta);
+      llenar(cuerpo,
+        desde && hasta
+          ? h("p", { class: "distancia", id: "lugar-km" }, h("strong", { class: "num" }, textoKm(km(desde, hasta))), ` en línea recta desde ${casa}`)
+          : h("p", { class: "tenue", id: "lugar-km" }, "No tenemos las coordenadas de este sitio para calcular la distancia, pero puedes ver la ruta."),
+        h("p", { class: "tenue peq" }, "Es la distancia entre tu municipio y la localidad del centro; por carretera suele ser mayor." + (hasta?.aprox ? " Las coordenadas de esta localidad son aproximadas." : "")),
+        h("div", { class: "campos" },
+          h("a", { class: "boton", id: "lugar-ruta", href: rutas.google, target: "_blank", rel: "noopener" }, "Cómo llegar (Google Maps)"),
+          rutas.osm ? h("a", { class: "boton sec", id: "lugar-osm", href: rutas.osm, target: "_blank", rel: "noopener" }, "OpenStreetMap") : null));
+    }).catch(() => llenar(cuerpo, h("p", { class: "error-txt", role: "alert" }, "No se ha podido cargar la lista de municipios. Recarga la página.")));
+  }
+  return h("div", { class: "bloque lugar", id: "lugar" },
+    h("div", { class: "fila-titulo" }, h("h3", { id: "lugar-titulo" }, `Distancia a ${nombre}`),
+      h("button", { type: "button", class: "enlace", id: "lugar-cerrar", onclick: cerrar }, "Cerrar")),
+    h("p", { class: "tenue peq", style: "margin-top:0" }, `${localidadBonita(L.localidad)}${L.provincia ? ` (${localidadBonita(L.provincia)})` : ""}`),
+    cuerpo,
+    L.cod || L.centro ? h("div", { class: "campos" },
+      L.cod ? h("button", { type: "button", class: "boton sec", id: "lugar-fav", "aria-pressed": String(fav), onclick: () => { alternarFavorito(objetivo); yo(raiz); } }, fav ? "★ Quitar de favoritos" : "☆ Guardar en favoritos") : null,
+      L.centro ? h("a", { class: "boton sec", id: "lugar-vacantes", href: "#/vacantes?" + new URLSearchParams({ centro: L.centro, cuerpo: "todos", semana: "todo" }) }, "Ver sus vacantes") : null) : null);
+}
+
+// ---------- centros favoritos (la estrella de Vacantes) ----------
+function bloqueFavoritos(raiz, ro = false) {
+  const casa = !ro && CUENTA.activa ? CUENTA.perfil?.casa || "" : "";
+  const dispositivos = CUENTA.perfil?.dispositivos || 0;
+  const lista = h("ul", { class: "favoritos", id: "lista-favoritos" }, YO.favoritos.map((f) => h("li", { "data-cod": f.cod },
+    h("div", { class: "fav-datos" },
+      h("strong", null, centroBonito(f.centro) || f.cod),
+      h("div", { class: "peq tenue" }, `${localidadBonita(f.localidad)}${f.provincia ? ` (${localidadBonita(f.provincia)})` : ""}`, " ", h("span", { class: "fav-km" }))),
+    h("div", { class: "fav-acciones" },
+      h("a", { class: "enlace", href: "#/vacantes?" + new URLSearchParams({ centro: f.centro, cuerpo: "todos", semana: "todo" }) }, "Vacantes"),
+      ro ? null : h("button", { type: "button", class: "enlace", onclick: () => ir("yo", { lugar: f.localidad, centro: f.centro, cod: f.cod, prov: f.provincia }) }, "Distancia"),
+      ro ? null : h("button", { type: "button", class: "enlace", "aria-label": `Quitar ${centroBonito(f.centro)} de mis favoritos`, onclick: () => { quitarFavorito(f.cod); yo(raiz); } }, "Quitar")))));
+  if (casa && YO.favoritos.length) {
+    cargarMunicipios().then((datos) => {
+      const m = datos.porClave.get(casa); if (!m) return;
+      for (const li of lista.children) {
+        const f = YO.favoritos.find((x) => x.cod === li.dataset.cod), c = f && coordsLocalidad(f.localidad);
+        if (c) li.querySelector(".fav-km").textContent = `· a ${textoKm(km(m, c))} de ${casa.replace(/\s\(.*\)$/, "")}`;
+      }
+    }).catch(() => { /* sin distancias */ });
+  }
+  return h("div", { class: "bloque", id: "favoritos" },
+    h("h3", null, "Mis centros favoritos"),
+    h("p", { class: "tenue peq" }, "Te avisamos en la app cuando sale una vacante nueva o se adjudica una vacante en estos centros."),
+    YO.favoritos.length ? lista : h("p", { class: "vacio", id: "sin-favoritos" }, ro ? "No tiene ninguno." : "Todavía no tienes ninguno. En Vacantes, pulsa la estrella de la fila de un centro."),
+    !ro && CUENTA.activa ? h("p", { class: "tenue peq", id: "avisos-estado" }, dispositivos
+      ? `Avisos activados en ${dispositivos === 1 ? "1 dispositivo" : dispositivos + " dispositivos"}. `
+      : "Todavía no recibes avisos en ningún dispositivo. ", h("a", { href: "#/ajustes" }, "Ajustes de avisos")) : null);
+}
+
 function destinos(raiz, ro = false) {
   const locs = Object.values(D.locs).map((x) => x.localidad).sort((a, b) => a.localeCompare(b, "es"));
   const entrada = h("input", { type: "text", id: "d-loc", list: "d-lista", placeholder: "Escribe una localidad" });
@@ -215,7 +291,7 @@ function destinos(raiz, ro = false) {
 function borrado(raiz) {
   const borrarTodo = confirmandoBorrado
     ? h("div", { class: "campos" }, h("span", null, "¿Borrar todo lo guardado?"),
-      h("button", { type: "button", class: "boton", id: "borrar-si", onclick: () => { YO.listas = []; YO.destinos = []; guardarYo(); confirmandoBorrado = false; yo(raiz); } }, "Sí, borrar"),
+      h("button", { type: "button", class: "boton", id: "borrar-si", onclick: () => { YO.listas = []; YO.destinos = []; YO.favoritos = []; guardarYo(); confirmandoBorrado = false; yo(raiz); } }, "Sí, borrar"),
       h("button", { type: "button", class: "boton sec", onclick: () => { confirmandoBorrado = false; yo(raiz); } }, "Cancelar"))
     : h("button", { type: "button", class: "boton sec", id: "borrar", onclick: () => { confirmandoBorrado = true; yo(raiz); } }, "Borrar mis datos");
   return h("div", { class: "bloque" }, h("h3", null, "Mis datos"),
@@ -330,19 +406,21 @@ function formularioAcceso(raiz, modo) {
   const acepto = h("input", { type: "checkbox", id: "au-ok" });
   const codigo = h("input", { type: "text", id: "au-ref", maxlength: 16, placeholder: "ARA-XXXXX", autocomplete: "off", value: codigoPendiente() });
   const nombre = h("input", { type: "text", id: "au-nombre", maxlength: 120, placeholder: "GARCÍA LÓPEZ, MARÍA", autocomplete: "off" });
+  const casa = modo === "registro" ? selectorMunicipio({ id: "au-casa" }) : null;
   const ir = async (e) => {
     e.preventDefault();
     const correo = mail.value.trim(), clave = pass.value;
     if (modo !== "nueva" && !/^\S+@\S+\.\S+$/.test(correo)) return mostrar("Escribe un correo válido.", true);
     if (modo !== "olvido" && clave.length < 8) return mostrar("La contraseña debe tener al menos 8 caracteres.", true);
     if (modo === "registro" && nombre.value.trim() && !nombreValido(nombre.value)) return mostrar(ERRORES_NOMBRE.invalido, true);
+    if (modo === "registro" && casa.texto() && !casa.valor()) return mostrar("Elige tu municipio de la lista: empieza a escribirlo y pulsa sobre él (o déjalo vacío).", true);
     if (modo === "registro" && !acepto.checked) return mostrar("Para crear la cuenta debes aceptar la política de privacidad y las condiciones.", true);
     mostrar("Un momento…");
     const botones = raiz.querySelectorAll("button"); botones.forEach((b) => { b.disabled = true; });
     let r;
     try {
       if (modo === "login") r = await entrarConCorreo(correo, clave);
-      else if (modo === "registro") r = await crearCuenta(correo, clave, codigo.value, nombre.value);
+      else if (modo === "registro") r = await crearCuenta(correo, clave, codigo.value, nombre.value, casa.valor());
       else if (modo === "olvido") r = await recuperarContrasena(correo);
       else r = await nuevaContrasena(clave);
     } catch (err) { r = { ok: false, mensaje: "Ha ocurrido un error. Inténtalo de nuevo." }; }
@@ -364,6 +442,8 @@ function formularioAcceso(raiz, modo) {
     modo !== "olvido" ? h("label", null, modo === "nueva" ? "Nueva contraseña (mínimo 8 caracteres)" : modo === "registro" ? "Contraseña (mínimo 8 caracteres)" : "Contraseña", pass) : null,
     modo === "registro" ? h("label", null, "Tu nombre como sale en las listas (opcional)", nombre) : null,
     modo === "registro" ? h("p", { class: "tenue peq", id: "au-nombre-ayuda" }, "Sirve para encontrar tus listas y especialidades sin que tengas que buscarlas. Solo lo usa tu cuenta; no se enseña a nadie.") : null,
+    modo === "registro" ? h("label", null, "Municipio donde vives (opcional)", casa.el) : null,
+    modo === "registro" ? h("p", { class: "tenue peq", id: "au-casa-ayuda" }, "Sirve para decirte a cuántos kilómetros en línea recta está cada centro. Solo guardamos el municipio, no tu dirección.") : null,
     modo === "registro" ? h("label", null, "Código de invitación (opcional)", codigo) : null,
     modo === "registro" ? h("label", { class: "check" }, acepto, h("span", null, "He leído la ", h("a", { href: "privacidad.html", target: "_blank", rel: "noopener" }, "política de privacidad y las condiciones"), " y las acepto.")) : null,
     h("div", { class: "campos" },
@@ -391,10 +471,11 @@ function pantallaEntrada(raiz, modo = modoAcceso) {
       h("ul", { class: "beneficios" },
         h("li", null, "Tu posición en cada lista, comparada con el último llamado de cada semana."),
         h("li", null, "Tus destinos preferidos, resaltados en Vacantes y en el Mapa."),
+        h("li", null, "Centros favoritos y la distancia desde tu casa a cada centro."),
         h("li", null, "Tus datos en tu cuenta: los ves igual en el móvil y en el ordenador."),
-        h("li", null, "Avisos desde la app: próximamente.")),
+        h("li", null, "Avisos en la app cuando sale una vacante nueva o se adjudica una vacante en tus centros favoritos.")),
       h("p", null, "Pase del curso ", info ? info.curso : "", ": ", precioTexto(prod), info ? ` hasta el ${info.hasta}. Pago único, no se renueva solo.` : "."),
-      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, lo que apuntes aquí y, si quieres, tu nombre tal como sale en las listas. Nunca guardamos tu DNI (si hay otra persona con tu mismo nombre, para buscar te pedimos las cifras que ya salen tapadas en los listados, y no se guardan). Puedes borrar todos tus datos de Aragón cuando quieras.")),
+      h("p", { class: "tenue peq" }, "Guardamos tu correo, para identificar tu cuenta, lo que apuntes aquí (listas, destinos y centros favoritos) y, si quieres, tu nombre tal como sale en las listas y el municipio donde vives. Nunca guardamos tu DNI (si hay otra persona con tu mismo nombre, para buscar te pedimos las cifras que ya salen tapadas en los listados, y no se guardan). Puedes borrar todos tus datos de Aragón cuando quieras.")),
     formularioAcceso(raiz, modo));
 }
 
