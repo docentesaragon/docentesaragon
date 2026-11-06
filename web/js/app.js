@@ -9,10 +9,11 @@ import { mapa } from "./mapa.js";
 import { yo } from "./yo.js";
 import { ajustes } from "./ajustes.js";
 import { admin } from "./admin.js";
+import { ayuda } from "./ayuda.js";
 import { iniciarCuenta, CUENTA, salirVerComo } from "./cuenta.js";
 import { registrarSW, resincronizarAvisos } from "./avisos.js";
 
-const VISTAS = { semana, historico, vacantes, mapa, yo, ajustes, admin };
+const VISTAS = { semana, historico, vacantes, mapa, yo, ajustes, admin, ayuda };
 const NECESITA_VACANTES = new Set(["vacantes", "mapa", "yo"]);
 const PESTANA = { ajustes: "yo", admin: "yo" };      // estas dos cuelgan de «Mi seguimiento»
 const raiz = document.getElementById("vista");

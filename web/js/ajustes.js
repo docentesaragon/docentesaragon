@@ -7,11 +7,16 @@ import { estadoDispositivo, activarAvisos, desactivarAvisos } from "./avisos.js"
 import { bloqueInvitar, textoPase } from "./yo.js";
 import { ir } from "./ruta.js";
 
-let confirmandoSeguimiento = false, confirmandoDatos = false, editandoNombre = false;
+let confirmandoSeguimiento = false, confirmandoDatos = false, editandoNombre = false;     // editandoNombre: solo para añadir el nombre si aún no lo hay
+let precarga = null;       // texto que llega al pulsar «Avisa a la administración» en Mi seguimiento: { tipo, texto }
 let errorDatos = "";       // si falla «Eliminar mis datos»
-let avisoNombre = "";      // «Nombre guardado.» tras cambiarlo
+let avisoNombre = "";      // «Nombre guardado.» tras añadirlo
 
-export function ajustes(raiz) {
+export function ajustes(raiz, params = {}) {
+  if (params.reclamar === "nombre") {
+    const n = CUENTA.perfil?.nombre;
+    precarga = { tipo: "reclamacion", texto: n ? `Mi nombre o mis listas no son correctos. Mi nombre en la web es «${n}» y debería ser: ` : "Mi nombre o mis listas no son correctos. " };
+  }
   if (!CUENTA.activa || CUENTA.estado === "anonimo") {
     llenar(raiz, h("div", { class: "cabecera-vista" }, h("h2", null, "Ajustes y avisos"),
       h("p", { class: "tenue" }, "Entra en Mi seguimiento con tu cuenta para ver tus ajustes."),
@@ -34,26 +39,28 @@ function bloqueCuenta(raiz) {
   const perfil = CUENTA.perfil || {};
   const error = h("p", { class: "error-txt", id: "aj-nom-error", role: "alert", hidden: true });
   const entrada = h("input", { type: "text", id: "aj-nom-in", maxlength: 120, autocomplete: "off", placeholder: "GARCÍA LÓPEZ, MARÍA", value: perfil.nombre || "" });
-  const sinCambios = perfil.cambios_restantes === 0;
-  const nombre = editandoNombre
+  // El nombre no se cambia desde aquí: solo se puede añadir si todavía no hay (si hay un error, se avisa a la administración).
+  const nombre = !perfil.nombre && editandoNombre
     ? h("form", { id: "aj-nom-form", novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
       if (!nombreValido(entrada.value)) { error.textContent = ERRORES_NOMBRE.invalido; error.hidden = false; return; }
       const estado = await guardarNombre(entrada.value);
       if (estado !== "ok") { error.textContent = ERRORES_NOMBRE[estado] || ERRORES_NOMBRE.error; error.hidden = false; return; }
-      editandoNombre = false; avisoNombre = "Nombre guardado. Vuelve a Mi seguimiento y pulsa «Buscar mis listas»."; ajustes(raiz);
+      editandoNombre = false; avisoNombre = "Nombre guardado. Vuelve a Mi seguimiento: tus listas se buscan solas."; ajustes(raiz);
     } },
     h("label", null, "Mi nombre en las listas", entrada),
+    h("p", { class: "tenue peq" }, "Revísalo bien: después no se puede cambiar desde aquí, solo avisando a la administración."),
     h("div", { class: "campos" },
       h("button", { type: "submit", class: "boton", id: "aj-nom-guardar" }, "Guardar"),
       h("button", { type: "button", class: "boton sec", onclick: () => { editandoNombre = false; ajustes(raiz); } }, "Cancelar")),
     error)
     : h("div", null,
       h("p", null, "Mi nombre en las listas: ", perfil.nombre ? h("strong", { id: "aj-nombre" }, perfil.nombre) : h("span", { class: "tenue", id: "aj-nombre" }, "no lo has puesto"), " ",
-        h("button", { type: "button", class: "enlace", id: "aj-nom-cambiar", disabled: sinCambios, onclick: () => { editandoNombre = true; avisoNombre = ""; ajustes(raiz); } }, perfil.nombre ? "Cambiar" : "Añadir")),
-      h("p", { class: "tenue peq" }, sinCambios
-        ? "Ya has cambiado el nombre 3 veces. Si necesitas cambiarlo otra vez, escríbenos en «Sugerencias y reclamaciones» y lo corregimos."
-        : "Sirve para encontrar tus listas y especialidades automáticamente. Solo lo usa tu cuenta y la administración puede verlo para ayudarte."),
+        perfil.nombre ? null : h("button", { type: "button", class: "enlace", id: "aj-nom-cambiar", onclick: () => { editandoNombre = true; avisoNombre = ""; ajustes(raiz); } }, "Añadir")),
+      perfil.nombre
+        ? h("p", { class: "tenue peq", id: "aj-nom-ayuda" }, "Sirve para encontrar tus listas y especialidades automáticamente. No se puede cambiar desde aquí. Si no es correcto, ",
+          h("a", { href: "#/ajustes?reclamar=nombre", id: "aj-nom-avisar" }, "avisa a la administración"), " y lo corregimos.")
+        : h("p", { class: "tenue peq" }, "Sirve para encontrar tus listas y especialidades automáticamente. Solo lo usa tu cuenta y la administración puede verlo para ayudarte."),
       avisoNombre ? h("p", { class: "tenue", id: "aj-nom-ok", role: "status" }, avisoNombre) : null);
   return h("div", { class: "bloque", id: "aj-cuenta" },
     h("h3", null, "Mi cuenta"),
@@ -88,19 +95,24 @@ function bloqueAvisos(raiz) {
   });
   return h("div", { class: "bloque", id: "aj-avisos" },
     h("h3", null, "Avisos en la app"),
-    h("p", null, "Te avisamos cuando se publica una vacante nueva o se adjudica una vacante en alguno de tus centros favoritos (la estrella de cada fila en Vacantes)."),
+    h("p", null, "Elige qué quieres que te avisemos. Los avisos llegan al móvil, no por correo."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", id: "avisos-listas", checked: avisos.listas !== false, onchange: async (e) => {
+      const hecho = await guardarAvisos({ listas: e.target.checked });
+      mensajeAvisos = hecho ? (e.target.checked ? "Avisos de tus listas activados." : "Avisos de tus listas desactivados.") : "No se pudo guardar. Inténtalo de nuevo.";
+      ajustes(raiz);
+    } }), "Tus listas: cada semana, si la adjudicación llegó a tu posición"),
     h("label", { class: "check" }, h("input", { type: "checkbox", id: "avisos-favoritos", checked: avisos.favoritos !== false, onchange: async (e) => {
       const hecho = await guardarAvisos({ favoritos: e.target.checked });
       mensajeAvisos = hecho ? (e.target.checked ? "Avisos de favoritos activados." : "Avisos de favoritos desactivados.") : "No se pudo guardar. Inténtalo de nuevo.";
       ajustes(raiz);
-    } }), "Vacantes y adjudicaciones en mis centros favoritos"),
+    } }), "Centros favoritos: vacantes nuevas y adjudicaciones (la estrella de cada fila en Vacantes)"),
     cuerpo,
     msg,
     h("p", { class: "tenue peq", id: "avisos-info" },
       n ? `Tu cuenta tiene avisos activados en ${n === 1 ? "1 dispositivo" : n + " dispositivos"}. ` : "",
       "Los avisos se envían una vez cada día laborable por la tarde, cuando se actualizan los datos. ",
       puedeSeguir() ? "" : "Para recibirlos necesitas tu prueba gratuita o un pase en vigor. ",
-      "Más adelante añadiremos avisos de tu especialidad."),
+      "Los avisos de tus listas salen de las listas que ya tienes en Mi seguimiento: solo te avisamos una vez por semana y lista."),
     h("p", { class: "tenue peq" }, "No enviamos avisos por correo: el correo solo se usa para entrar en tu cuenta."));
 }
 
@@ -111,6 +123,8 @@ const ERRORES_MENSAJE = { invalido: "Escribe al menos 5 caracteres.", limite: "H
 function bloqueMensajes() {
   const tipo = h("select", { id: "msg-tipo" }, h("option", { value: "sugerencia" }, "Sugerencia"), h("option", { value: "reclamacion" }, "Reclamación"));
   const texto = h("textarea", { id: "msg-texto", rows: 4, maxlength: 2000, placeholder: "Cuéntanos qué te gustaría mejorar o qué ha ido mal" });
+  const pre = precarga; precarga = null;     // llega desde «Avisa a la administración»: tipo y texto empezados, y el cursor listo para escribir
+  if (pre) { tipo.value = pre.tipo; texto.value = pre.texto; setTimeout(() => { texto.scrollIntoView({ block: "center" }); texto.focus(); texto.setSelectionRange(texto.value.length, texto.value.length); }, 0); }
   const estado = h("p", { id: "msg-estado", class: "tenue", role: "status" });
   const lista = h("div", { id: "msg-lista" });
   const cargar = () => misMensajes().then((ms) => llenar(lista, ms.length

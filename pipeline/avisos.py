@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Envía los avisos de «favoritos»: vacantes nuevas y adjudicaciones en los centros que cada persona ha marcado como favoritos.
+"""Envía los avisos de la app: (1) «favoritos»: vacantes nuevas y adjudicaciones en los centros que cada persona ha marcado como
+favoritos; (2) «listas»: cómo ha ido la adjudicación de la semana para cada lista que la persona sigue en Mi seguimiento.
 
     export SUPABASE_URL="https://xxxx.supabase.co"
     export SUPABASE_SERVICE_KEY="eyJ..."          # clave SECRETA service_role
@@ -62,8 +63,51 @@ def lista_corta(nombres, maximo=3):
     return ", ".join(nombres[:maximo]) + f" y {len(nombres) - maximo} más"
 
 
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def fecha_corta(iso):
+    """'2026-11-04' -> '4 de noviembre' (si no es una fecha, cadena vacía)."""
+    m = re.fullmatch(r"(\d{4})-(\d\d)-(\d\d)", str(iso or "")[:10])
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        return ""
+    return f"{int(m.group(3))} de {MESES[int(m.group(2)) - 1]}"
+
+
+# lo que se dice de una lista según cómo fue la semana (equivale a situacion() de web/js/comun.js)
+ESTADO_LISTA = {
+    "alcanzada": ("esta semana la lista llegó a tu posición", "llegó a tu posición"),
+    "convocado": ("estabas entre los convocados, pero la lista no llegó a ti", "estabas entre los convocados, pero no llegó a ti"),
+    "no-llego": ("esta semana la lista no llegó a tu posición", "no llegó a tu posición"),
+    "lejos": ("esta semana la lista no llegó a tu posición", "no llegó a tu posición"),
+}
+
+
+def redactar_lista(a):
+    largo, _corto = ESTADO_LISTA.get(a.get("estado"), ESTADO_LISTA["lejos"])
+    esp = bonito(a.get("esp_nombre") or a.get("esp_cod") or "tu lista")
+    titulo = f"{esp}: {largo}"
+    f = fecha_corta(a.get("fecha"))
+    cuerpo = (f"Adjudicación del {f}. " if f else "") + ("Entra para ver tus opciones." if a.get("estado") == "alcanzada" else "Entra para ver cómo va tu lista.")
+    return {"t": titulo[:90], "b": cuerpo[:180], "u": "#/yo", "g": a["clave"]}
+
+
+def resumen_listas(avisos):
+    """Varias listas de la misma persona en un solo aviso."""
+    partes = []
+    for a in sorted(avisos, key=lambda x: (x.get("estado") != "alcanzada", bonito(x.get("esp_nombre") or ""))):
+        _largo, corto = ESTADO_LISTA.get(a.get("estado"), ESTADO_LISTA["lejos"])
+        partes.append(f"{bonito(a.get('esp_nombre') or a.get('esp_cod') or 'Lista')}: {corto}")
+    llegaron = sum(1 for a in avisos if a.get("estado") == "alcanzada")
+    titulo = ("Esta semana la adjudicación llegó a tu posición en " + plural(llegaron, "lista", "listas")) if llegaron else f"Tus {len(avisos)} listas esta semana"
+    cuerpo = " · ".join(partes[:3]) + (f" · y {len(partes) - 3} más" if len(partes) > 3 else "")
+    return {"t": titulo[:90], "b": cuerpo[:180], "u": "#/yo", "g": "listas"}
+
+
 def redactar(a):
     """Un aviso de la base de datos -> mensaje para el móvil: t = título, b = texto, u = adónde lleva, g = etiqueta (no se repite)."""
+    if a.get("tipo") == "lista":
+        return redactar_lista(a)
     centro, loc, n, esp = centro_bonito(a["centro"]), localidad_bonita(a["localidad"]), int(a["n"]), a.get("esp") or []
     if a["tipo"] == "adjudicada":
         titulo = f"Adjudicación en {centro}"
@@ -80,12 +124,21 @@ def redactar(a):
 
 
 def agrupar(avisos):
-    """[(mensaje, [claves que cubre])]. Pocas novedades: una notificación por cada una; muchas: un resumen."""
-    if len(avisos) <= MAX_INDIVIDUALES:
-        return [(redactar(a), [a["clave"]]) for a in avisos]
-    centros = lista_corta([centro_bonito(a["centro"]) for a in avisos], 2)
-    msg = {"t": f"{len(avisos)} novedades en tus centros favoritos", "b": centros, "u": "#/yo", "g": "resumen"}
-    return [(msg, [a["clave"] for a in avisos])]
+    """[(mensaje, [claves que cubre])]. Las listas de una persona van juntas (una sola notificación si son varias); de los centros
+    favoritos, pocas novedades: una notificación por cada una; muchas: un resumen."""
+    listas = [a for a in avisos if a.get("tipo") == "lista"]
+    favoritos = [a for a in avisos if a.get("tipo") != "lista"]
+    salida = []
+    if len(listas) == 1:
+        salida.append((redactar(listas[0]), [listas[0]["clave"]]))
+    elif listas:
+        salida.append((resumen_listas(listas), [a["clave"] for a in listas]))
+    if len(favoritos) <= MAX_INDIVIDUALES:
+        salida.extend((redactar(a), [a["clave"]]) for a in favoritos)
+    elif favoritos:
+        centros = lista_corta([centro_bonito(a["centro"]) for a in favoritos], 2)
+        salida.append(({"t": f"{len(favoritos)} novedades en tus centros favoritos", "b": centros, "u": "#/yo", "g": "resumen"}, [a["clave"] for a in favoritos]))
+    return salida
 
 
 # ---------- base de datos ----------

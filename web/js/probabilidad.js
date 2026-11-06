@@ -98,5 +98,5 @@ export function tarjetaProbabilidad(l) {
       h("p", { class: "tenue peq", style: "margin:.6rem 0 0" }, "Plazas ofrecidas cada semana: ", h("span", { class: "leyenda-verde" }, "verde"), " = la adjudicación llegó a tu posición; ", h("span", { class: "leyenda-oro" }, "naranja"), " = estabas entre los convocados pero no llegó."),
       grafico(semanas)) : null,
     est.pocosDatos ? h("p", { class: "tenue peq" }, "Todavía hay pocas semanas con datos: la estimación irá afinándose.") : null,
-    h("p", { class: "tenue peq" }, "Estimación orientativa: mira con qué frecuencia la adjudicación semanal ha llegado a tu posición (más peso a las últimas semanas). No sabe si estás disponible ni qué plazas pedirás, y el pasado no garantiza lo que pase. Aragón no publica las peticiones, así que no se puede contar quién compite contigo."));
+    h("p", { class: "tenue peq" }, "Estimación orientativa: mira con qué frecuencia la adjudicación semanal ha llegado a tu posición (más peso a las últimas semanas). No sabe si estás disponible ni qué plazas pedirás, y el pasado no garantiza lo que pase. Aragón no publica las peticiones, así que no se puede contar quién compite contigo. ", h("a", { href: "#/ayuda?p=probabilidad", class: "prob-ayuda" }, "Cómo se calcula")));
 }

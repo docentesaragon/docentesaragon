@@ -8,7 +8,7 @@ const cfg = window.CONFIG || {};
 const URL_SB = (cfg.supabaseUrl || "").replace(/\/$/, "");
 const CLAVE_SESION = "docentes-aragon:sesion";
 const CLAVE_REF = "docentes-aragon:ref";     // código de invitación que trae el enlace (?ref=ARA-XXXXX), hasta que se use
-const VERSION_PRIVACIDAD = "2026-11-06-v3";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
+const VERSION_PRIVACIDAD = "2026-11-06-v3.3";   // versión de privacidad/condiciones que se acepta al crear la cuenta (privacidad.html)
 
 export const CUENTA = {
   activa: MODO_CUENTA,

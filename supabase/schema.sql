@@ -186,7 +186,8 @@ alter table aragon.cuentas add column if not exists busq_dia date;              
 alter table aragon.cuentas add column if not exists busq_n int not null default 0;             -- búsquedas de ese día (máx. 5)
 -- Dónde vive (el municipio que elige al registrarse, p. ej. «Utebo (Zaragoza)»): solo sirve para calcular distancias en su pantalla.
 alter table aragon.cuentas add column if not exists casa text check (casa is null or char_length(casa) between 3 and 120);
--- Qué avisos quiere recibir en la app. Hoy solo «favoritos» (nueva vacante o adjudicación en sus centros favoritos); pensado para añadir más.
+-- Qué avisos quiere recibir en la app: «favoritos» (nueva vacante o adjudicación en sus centros favoritos) y «listas» (cómo ha ido la
+-- adjudicación de la semana para las listas que sigue; si la clave no está, está activado).
 alter table aragon.cuentas add column if not exists avisos jsonb not null default '{"favoritos": true}'::jsonb check (jsonb_typeof(avisos) = 'object' and octet_length(avisos::text) <= 500);
 
 -- ---------------------------------------------------------------------
@@ -703,7 +704,7 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------
---  Municipio de residencia y avisos en la app (favoritos)
+--  Municipio de residencia y avisos en la app (favoritos y listas)
 --  Los centros favoritos se guardan en «seguimiento.datos.favoritos» (lista de {cod, centro, localidad, desde}); aquí solo
 --  están los dispositivos que han aceptado avisos y lo ya avisado. El robot semanal (pipeline/avisos.py) llama a
 --  avisos_pendientes(), envía las notificaciones y las anota con avisos_marcar().
@@ -720,7 +721,7 @@ create index if not exists dispositivos_user_idx on aragon.dispositivos (user_id
 
 create table if not exists aragon.avisos_enviados (
   user_id  uuid not null references auth.users(id) on delete cascade,
-  clave    text not null,                                   -- acto|centro|tipo: así no se avisa dos veces de lo mismo
+  clave    text not null,                                   -- acto|centro|tipo (favoritos) o acto|lista|cuerpo|esp (listas): así no se avisa dos veces de lo mismo
   enviado  timestamptz not null default now(),
   primary key (user_id, clave)
 );
@@ -746,7 +747,8 @@ begin
 end;
 $$;
 
--- Qué avisos quiere. Solo se aceptan las claves conocidas (hoy: favoritos) y con valor verdadero/falso. Devuelve los avisos guardados.
+-- Qué avisos quiere. Solo se aceptan las claves conocidas (favoritos y listas) y con valor verdadero/falso. Si «listas» no está,
+-- es que sigue activado. Devuelve los avisos guardados.
 create or replace function aragon.guardar_avisos(p_avisos jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare yo uuid := auth.uid(); actual jsonb;
@@ -756,6 +758,9 @@ begin
   select avisos into actual from aragon.cuentas where user_id = yo;
   if jsonb_typeof(p_avisos) = 'object' and jsonb_typeof(p_avisos -> 'favoritos') = 'boolean' then
     actual := actual || jsonb_build_object('favoritos', (p_avisos ->> 'favoritos')::boolean);
+  end if;
+  if jsonb_typeof(p_avisos) = 'object' and jsonb_typeof(p_avisos -> 'listas') = 'boolean' then
+    actual := actual || jsonb_build_object('listas', (p_avisos ->> 'listas')::boolean);
   end if;
   update aragon.cuentas set avisos = actual where user_id = yo;
   return actual;
@@ -812,11 +817,17 @@ language sql stable security definer set search_path = '' as $$
   );
 $$;
 
--- Lo que hay que avisar ahora: por cada cuenta con pase, avisos de favoritos activados y algún dispositivo, las novedades de sus
--- centros favoritos que aún no se le han avisado:
---   ofertada   = hay una vacante nueva en el centro (sale la oferta)      adjudicada = se ha adjudicado una vacante del centro
--- Solo cuenta lo publicado en los últimos 10 días y desde el día en que la persona marcó el favorito.
--- [{ user_id, dispositivos: [{endpoint, p256dh, auth}], avisos: [{clave, tipo, acto, centro_cod, centro, localidad, n, esp: [nombres]}] }]
+-- Lo que hay que avisar ahora. Por cada cuenta con pase y algún dispositivo, dos clases de novedades que aún no se le han avisado:
+--  1) FAVORITOS (si tiene los avisos de favoritos activados), de sus centros favoritos:
+--       ofertada   = hay una vacante nueva en el centro (sale la oferta)      adjudicada = se ha adjudicado una vacante del centro
+--     Solo cuenta lo publicado en los últimos 10 días y desde el día en que la persona marcó el favorito.
+--  2) LISTAS (si no ha apagado los avisos de listas): por cada lista que sigue en «Mi seguimiento», cómo ha ido la última adjudicación
+--     publicada en los últimos 10 días: alcanzada (la lista llegó a su posición), convocado (estaba entre los convocados, pero la lista
+--     no llegó), no-llego o lejos. Se avisa una sola vez por semana (acto) y lista; solo la adjudicación más reciente de cada lista.
+--     Las posiciones se comparan como texto en orden «C» (byte a byte), igual que hace la web.
+-- [{ user_id, dispositivos: [{endpoint, p256dh, auth}], avisos: [
+--     { clave, tipo: ofertada|adjudicada, acto, centro_cod, centro, localidad, n, esp: [nombres] }   (favoritos)
+--     { clave, tipo: lista, estado, acto, fecha, cuerpo_cod, esp_cod, esp_nombre }                    (listas) ] }]
 create or replace function aragon.avisos_pendientes() returns jsonb
 language sql stable security definer set search_path = '' as $$
   with fav as (
@@ -842,17 +853,59 @@ language sql stable security definer set search_path = '' as $$
     group by f.user_id, v.acto, v.centro_cod, v.estado
   ),
   nuevo as (
-    select ev.* , ev.acto || '|' || ev.centro_cod || '|' || ev.tipo as clave
+    select ev.*, ev.acto || '|' || ev.centro_cod || '|' || ev.tipo as clave
     from ev where not exists (select 1 from aragon.avisos_enviados x where x.user_id = ev.user_id and x.clave = ev.acto || '|' || ev.centro_cod || '|' || ev.tipo)
+  ),
+  lis as (
+    select s.user_id, l.cuerpo_cod, l.esp, l.pos
+    from aragon.seguimiento s
+    join aragon.cuentas c on c.user_id = s.user_id and c.avisos -> 'listas' is distinct from 'false'::jsonb
+    cross join lateral (
+      select e.value ->> 'cuerpo_cod' as cuerpo_cod, e.value ->> 'esp' as esp, e.value ->> 'clave' as pos
+      from jsonb_array_elements(case when jsonb_typeof(s.datos -> 'listas') = 'array' then s.datos -> 'listas' else '[]'::jsonb end) with ordinality as e(value, n)
+      where e.n <= 30 and jsonb_typeof(e.value) = 'object' and coalesce(e.value ->> 'cuerpo_cod', '') <> '' and coalesce(e.value ->> 'esp', '') <> ''
+            and coalesce(e.value ->> 'clave', '') <> ''
+    ) l
+    where exists (select 1 from aragon.dispositivos d where d.user_id = s.user_id) and aragon.pase_de(s.user_id)
+  ),
+  ult as (
+    select distinct on (l.user_id, l.cuerpo_cod, l.esp)
+           l.user_id, l.cuerpo_cod, l.esp, u.acto, a.fecha_adjudicacion as fecha,
+           case when u.clave_ultimo is not null and l.pos collate "C" <= u.clave_ultimo collate "C" then 'alcanzada'
+                when u.clave_max_convocado is null then 'no-llego'
+                when l.pos collate "C" <= u.clave_max_convocado collate "C" then 'convocado'
+                else 'lejos' end as estado,
+           u.acto || '|lista|' || l.cuerpo_cod || '|' || l.esp as clave
+    from lis l
+    join aragon.ultimo_llamado u on u.cuerpo_cod = l.cuerpo_cod and u.esp = l.esp
+    join aragon.actos a on a.acto = u.acto
+    where a.fecha_adjudicacion between current_date - 10 and current_date
+          and (u.clave_ultimo is not null or u.clave_max_convocado is not null)
+    order by l.user_id, l.cuerpo_cod, l.esp, a.fecha_adjudicacion desc, u.acto desc
+  ),
+  nueva_lista as (
+    select ult.*, coalesce(e.nombre, ult.esp) as esp_nombre
+    from ult left join aragon.especialidades e on e.cuerpo_cod = ult.cuerpo_cod and e.cod = ult.esp
+    where not exists (select 1 from aragon.avisos_enviados x where x.user_id = ult.user_id and x.clave = ult.clave)
+  ),
+  todos as (
+    select n.user_id, 1 as grupo, n.centro as orden1, n.tipo as orden2,
+           jsonb_build_object('clave', n.clave, 'tipo', n.tipo, 'acto', n.acto, 'centro_cod', n.centro_cod, 'centro', n.centro,
+                              'localidad', n.localidad, 'n', n.n, 'esp', to_jsonb(n.esp)) as aviso
+    from nuevo n
+    union all
+    select l.user_id, 0, l.esp_nombre, l.cuerpo_cod,
+           jsonb_build_object('clave', l.clave, 'tipo', 'lista', 'estado', l.estado, 'acto', l.acto, 'fecha', l.fecha,
+                              'cuerpo_cod', l.cuerpo_cod, 'esp_cod', l.esp, 'esp_nombre', l.esp_nombre)
+    from nueva_lista l
   )
   select coalesce(jsonb_agg(jsonb_build_object(
       'user_id', u.user_id,
       'dispositivos', (select jsonb_agg(jsonb_build_object('endpoint', d.endpoint, 'p256dh', d.p256dh, 'auth', d.auth)) from aragon.dispositivos d where d.user_id = u.user_id),
       'avisos', u.avisos)), '[]'::jsonb)
   from (
-    select n.user_id, jsonb_agg(jsonb_build_object('clave', n.clave, 'tipo', n.tipo, 'acto', n.acto, 'centro_cod', n.centro_cod, 'centro', n.centro,
-                                                   'localidad', n.localidad, 'n', n.n, 'esp', to_jsonb(n.esp)) order by n.centro, n.tipo) as avisos
-    from nuevo n group by n.user_id
+    select t.user_id, jsonb_agg(t.aviso order by t.grupo, t.orden1, t.orden2) as avisos
+    from todos t group by t.user_id
   ) u;
 $$;
 
@@ -915,7 +968,7 @@ comment on table aragon.admins         is 'Correos con acceso a la administraci�
 comment on table aragon.personas       is 'PRIVADA. Candidatos de los listados del curso (nombre normalizado, DNI parcial y posición en cada lista). Solo la leen las funciones buscar_mis_listas y el robot';
 comment on table aragon.personas_excluidas is 'PRIVADA. Personas que han pedido no salir en la búsqueda por nombre: cargar_personas las salta y las borra';
 comment on table aragon.dispositivos   is 'PRIVADA. Navegadores/móviles que han aceptado avisos en la app (dirección y claves del servicio de avisos). Solo las funciones del servidor y el robot';
-comment on table aragon.avisos_enviados is 'PRIVADA. Qué avisos de favoritos ya se enviaron a cada cuenta, para no repetirlos';
+comment on table aragon.avisos_enviados is 'PRIVADA. Qué avisos (de favoritos y de listas) ya se enviaron a cada cuenta, para no repetirlos';
 comment on table aragon.servidor        is 'PRIVADA. Claves del servicio de avisos (VAPID). La web solo lee la pública con vapid_publica(); la privada la usa el robot';
 comment on table aragon.mensajes       is 'Sugerencias y reclamaciones que envía la gente desde Ajustes';
 comment on table aragon.admin_log      is 'Registro de lo que hace el administrador sobre cuentas de otras personas (ver como, regalar pase, corregir nombre...)';

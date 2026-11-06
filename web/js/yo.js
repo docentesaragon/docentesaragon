@@ -1,13 +1,13 @@
 // Sección "Mi seguimiento": tu posición en la lista y tus destinos preferidos.
 // Con Supabase configurado es el área personal de pago (cuenta con correo y contraseña + pase hasta el 30/06); sin él, funciona en local para pruebas.
-import { h, llenar, miles, fmtCorta, fmtDMA, claveDe, parseClave, textoClave, localidadBonita, centroBonito, bonito } from "./util.js";
+import { h, llenar, miles, fmtCorta, fmtDMA, claveDe, parseClave, textoClave, localidadBonita, centroBonito, bonito, leerLocal, guardarLocal } from "./util.js";
 import { D, YO, guardarYo, nombreCuerpo, actosDe } from "./datos.js";
 import { CUENTA, entrarConGoogle, entrarConCorreo, crearCuenta, recuperarContrasena, nuevaContrasena, salir, pagoHecho,
-  diasDePrueba, misReferidos, usarCodigo, enlacesInvitar, codigoPendiente, guardarNombre, buscarMisListas, ERRORES_NOMBRE, nombreValido, TEXTO_SYNC } from "./cuenta.js";
+  diasDePrueba, misReferidos, usarCodigo, enlacesInvitar, codigoPendiente, guardarNombre, buscarMisListas, guardarAhora, ERRORES_NOMBRE, nombreValido, TEXTO_SYNC } from "./cuenta.js";
 import { productoActual, cursoDeProducto, compraDisponible, precioEnPlay, comprarPase, restaurarCompra } from "./compra.js";
 import { situacion, nombreEspBonito } from "./comun.js";
 import { filtrar } from "./vacantes.js";
-import { ir } from "./ruta.js";
+import { ir, leerRuta } from "./ruta.js";
 import { tarjetaProbabilidad } from "./probabilidad.js";
 import { bloqueCasa } from "./casa.js";
 import { cargarMunicipios, km, textoKm, textoTiempo, coordsLocalidad, enlacesRuta, selectorMunicipio } from "./distancia.js";
@@ -17,9 +17,12 @@ const URL_PADDOC = "https://aplicaciones.aragon.es/epdtp/welcome";     // solici
 const borrador = { cuerpo_cod: "0597", esp: "", lista: "1", fecha: "", bloque: "", orden: "" };
 let confirmandoBorrado = false;
 let verCompra = false;     // true si quien está en prueba (o ya tiene pase) ha pulsado «Activar mi pase»
-let manualAbierto = false; // «Añadir mi posición a mano» desplegado
-let busqueda = null;       // resultado de la última búsqueda por nombre: { estado, listas?, restantes? }
-let buscando = false, editandoNombre = false;
+let manualAbierto = false; // solo administración: «Cambiar mis especialidades a mano» desplegado (#/yo?manual=1)
+let busqueda = null;       // resultado de la última búsqueda por nombre: { estado, nombres?, con_dni? }
+let buscando = false;
+const CLAVE_PASOS = "docentes-aragon:pasos-ocultos";   // «Primeros pasos» ocultados a mano en este dispositivo
+let autoLanzada = false;   // la búsqueda automática se intenta una sola vez por carga de la página
+const CLAVE_BUSQUEDA = "docentes-aragon:busqueda";   // «ya buscadas hoy» en este dispositivo (solo una fecha y una marca de la cuenta, nada personal)
 let lugarActual = null;    // centro o localidad cuya distancia se está mirando: { localidad, centro, cod, provincia } (llega con #/yo?lugar=...)
 
 export function yo(raiz, params) {
@@ -63,25 +66,68 @@ function seguimiento(raiz) {
     campo("Orden en el bloque", h("input", { type: "number", id: "y-orden", min: 1, value: borrador.orden, oninput: (e) => { borrador.orden = e.target.value; } })),
     h("button", { type: "submit", class: "boton", id: "y-anadir" }, "Guardar")),
   error);
-  // Con cuenta, lo normal es la búsqueda por nombre; a mano queda plegado. Sin cuenta (modo de prueba) es la única forma.
+  // Con cuenta, un proceso automático busca las listas por el nombre de la cuenta: no hay nada que apuntar a mano. Solo la administración conserva este formulario
+  // (enlace de Ajustes), y sin cuenta (modo de prueba) es la única forma de apuntar una posición.
+  const conManual = !CUENTA.activa || (CUENTA.admin && manualAbierto);
   const manual = h("details", { class: "bloque manual", id: "manual", open: !CUENTA.activa || manualAbierto, ontoggle: (e) => { if (CUENTA.activa) manualAbierto = e.target.open; } },
-    h("summary", null, CUENTA.activa ? "Añadir mi posición en una lista a mano" : "Añadir mi posición en una lista"), formulario);
+    h("summary", null, CUENTA.activa ? "Administrador: cambiar mis especialidades a mano" : "Añadir mi posición en una lista"), formulario);
 
   const seguimientos = YO.listas.map((l) => bloqueLista(l, raiz, ro));
+  const cabecera = CUENTA.activa ? cabeceraSaludo(ro)
+    : h("div", { class: "cabecera-vista" },
+      h("div", { class: "fila-titulo" }, h("h2", null, "Mi seguimiento"), botonPaddoc()),
+      h("p", { class: "tenue" }, "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que escribas aquí se guarda solo en este navegador: no se envía a ningún sitio y la web no te pide nombre ni DNI."));
   llenar(raiz,
-    h("div", { class: "cabecera-vista" },
-      h("div", { class: "fila-titulo" }, h("h2", null, "Mi seguimiento"),
-        h("a", { class: "boton boton-paddoc", id: "ir-paddoc-directo", href: URL_PADDOC, target: "_blank", rel: "noopener" }, "Ir a PADDOC")),
-      h("p", { class: "tenue" }, CUENTA.activa
-        ? "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que apuntes aquí se guarda en tu cuenta y solo lo ves tú. No guardamos tu DNI."
-        : "Compara tu posición en la lista con hasta dónde llegó cada semana. Lo que escribas aquí se guarda solo en este navegador: no se envía a ningún sitio y la web no te pide nombre ni DNI."),
-      h("p", { class: "tenue peq" }, "«Ir a PADDOC» abre en otra pestaña la web oficial de Educaragón donde se hace la solicitud de destinos.")),
+    cabecera,
     CUENTA.activa ? [mensajeCuenta(), barraCuenta(raiz), avisoDeAcceso(raiz)] : null,
+    CUENTA.activa && !ro ? primerosPasos(raiz) : null,
+    CUENTA.activa && !ro ? tarjetaInvitar() : null,
     lugarActual && !ro ? bloqueLugar(raiz) : null,
     CUENTA.activa && !ro ? bloqueBuscar(raiz) : null,
-    ro ? null : manual,
-    h("div", { class: "dos-col" }, h("div", null, seguimientos.length ? seguimientos : h("p", { class: "vacio", id: "sin-listas" }, "Todavía no has añadido ninguna lista.")), h("div", null, CUENTA.activa && !ro ? bloqueCasa({ alCambiar: () => yo(raiz) }) : null, bloqueFavoritos(raiz, ro), destinos(raiz, ro))),
+    ro || !conManual ? null : manual,
+    h("div", { class: "dos-col" }, h("div", null, seguimientos.length ? seguimientos : h("p", { class: "vacio", id: "sin-listas" }, CUENTA.activa ? "Todavía no tenemos ninguna lista tuya." : "Todavía no has añadido ninguna lista.")), h("div", null, CUENTA.activa && !ro ? bloqueCasa({ alCambiar: () => yo(raiz) }) : null, bloqueFavoritos(raiz, ro), destinos(raiz, ro))),
+    CUENTA.activa && !ro ? avisarAdmin() : null,
     CUENTA.activa ? h("p", { class: "tenue peq", id: "sync-estado", role: "status" }, TEXTO_SYNC[CUENTA.sync] || "") : borrado(raiz));
+  if (CUENTA.activa && !ro) buscarSola(raiz);
+}
+
+function botonPaddoc() {
+  return h("a", { class: "boton boton-paddoc", id: "ir-paddoc-directo", href: URL_PADDOC, target: "_blank", rel: "noopener", title: "Abre en otra pestaña la web oficial de Educaragón donde se hace la solicitud de destinos" }, "Ir a PADDOC");
+}
+
+/** «María José» / «García López» a partir de «GARCÍA LÓPEZ, MARÍA JOSÉ» (el nombre se escribe como en los listados: apellidos, nombre). */
+export function datosNombre(texto) {
+  const t = (texto || "").trim().replace(/\s+/g, " ");
+  if (!t) return { pila: "", completo: "", iniciales: "" };
+  const coma = t.indexOf(",");
+  const ape = bonito(coma >= 0 ? t.slice(0, coma).trim() : t), pila = coma >= 0 ? bonito(t.slice(coma + 1).trim()) : "";
+  const palabras = (pila ? [pila, ape] : ape.split(" ")).filter(Boolean);
+  return { pila, completo: pila ? `${pila} ${ape}` : ape, iniciales: palabras.slice(0, 2).map((x) => x[0].toUpperCase()).join("") };
+}
+
+/** Lo primero que se ve en Mi seguimiento: quién eres y en qué especialidades estás (como en DocentsCV). */
+function cabeceraSaludo(ro) {
+  const nombre = (ro ? CUENTA.verComo?.nombre : CUENTA.perfil?.nombre) || "";
+  const { pila, completo, iniciales } = datosNombre(nombre);
+  const esps = [...YO.listas].sort((a, b) => (a.cuerpo_cod + a.esp < b.cuerpo_cod + b.esp ? -1 : 1));
+  const sinEsp = buscando ? "Buscando tus especialidades…"
+    : !nombre ? (ro ? "No ha escrito su nombre." : "Escribe tu nombre más abajo y buscamos tus especialidades solas.")
+      : ro ? "Todavía sin especialidades." : "Todavía no sales en ninguna lista de este curso: lo comprobamos solos cada día.";
+  return h("div", { class: "cabecera-vista saludo", id: "saludo" },
+    nombre ? h("div", { class: "avatar", id: "saludo-iniciales", "aria-hidden": "true" }, iniciales) : null,
+    h("div", { class: "saludo-texto" },
+      h("h2", { id: "saludo-hola" }, nombre ? (pila ? `Hola, ${pila}` : "Hola") : "Mi seguimiento"),
+      nombre ? h("p", { class: "saludo-nombre", id: "saludo-nombre" }, completo) : null,
+      h("div", { class: "etiquetas", id: "mis-especialidades" }, esps.length
+        ? esps.map((l) => h("span", { class: "chip oro", "data-esp": `${l.cuerpo_cod}|${l.esp}`, title: bonito(nombreCuerpo(l.cuerpo_cod)) }, `${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`))
+        : h("span", { class: "tenue peq", id: "sin-especialidades" }, sinEsp))),
+    botonPaddoc());
+}
+
+/** Al final de Mi seguimiento: el nombre y las listas no se tocan a mano; si algo está mal, se avisa a la administración. */
+function avisarAdmin() {
+  return h("p", { class: "tenue avisar-admin", id: "avisar-admin" }, "¿Tu nombre o alguna de tus listas no es correcta? ",
+    h("a", { href: "#/ajustes?reclamar=nombre", id: "avisar-admin-enlace" }, "Avisa a la administración"), " y lo corregimos.");
 }
 
 /** Pone (o sustituye) una lista en el seguimiento: una por cuerpo y especialidad. */
@@ -91,48 +137,66 @@ function anadirLista(l) {
 }
 
 // ---------- «Mis listas»: nombre en las listas + búsqueda automática ----------
+const hoy = () => new Date().toISOString().slice(0, 10);
+const marcaDeCuenta = () => { let n = 5381; for (const c of CUENTA.email || "") n = ((n * 33) ^ c.charCodeAt(0)) >>> 0; return `${hoy()}:${n}`; };   // fecha + número sin sentido fuera de esta cuenta
+
+/** Al entrar en Mi seguimiento, si la cuenta tiene nombre, busca sola las listas: una vez por carga de la página y, como mucho, una vez al día en este dispositivo. */
+function buscarSola(raiz) {
+  const perfil = CUENTA.perfil;
+  if (autoLanzada || buscando || CUENTA.verComo || CUENTA.estado !== "con_pase" || !perfil?.nombre || perfil.busquedas_restantes === 0) return;
+  autoLanzada = true;
+  if (leerLocal(CLAVE_BUSQUEDA, "") === marcaDeCuenta()) return;
+  lanzarBusqueda(raiz);
+}
+
+/** Busca por el nombre de la cuenta (y, si hay homónimos, por las cifras del DNI) y apunta en el seguimiento lo que encuentre. */
 async function lanzarBusqueda(raiz, nif = "") {
   buscando = true; yo(raiz);
-  busqueda = await buscarMisListas(nif);
-  buscando = false; yo(raiz);
+  const r = await buscarMisListas(nif);
+  buscando = false; busqueda = r;
+  let hayCambios = false;
+  if (r.estado === "ok") {
+    const nuevas = [];
+    for (const l of r.listas || []) {
+      const p = parseClave(l.clave); if (!p) continue;
+      const ya = YO.listas.find((x) => x.cuerpo_cod === l.cuerpo_cod && x.esp === l.esp);
+      if (ya && ya.clave === l.clave) continue;
+      anadirLista({ cuerpo_cod: l.cuerpo_cod, esp: l.esp, lista: p.lista, fecha: p.fecha, bloque: p.bloque, orden: p.orden, clave: l.clave });
+      nuevas.push(`${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`);
+    }
+    hayCambios = nuevas.length > 0;
+    if (hayCambios) guardarYo();
+    busqueda = hayCambios ? { estado: "anadidas", nombres: nuevas } : { estado: "al_dia" };
+  }
+  if (leerRuta().vista === "yo") yo(raiz);      // si ya se ha ido a otra pantalla, no se la pisa
+  // «Ya buscadas hoy» solo si lo encontrado ya está guardado en la cuenta: si se cierra la página antes de guardarse, la próxima vez se busca de nuevo
+  if (r.estado === "no_encontrado" || (r.estado === "ok" && (!hayCambios || await guardarAhora()))) guardarLocal(CLAVE_BUSQUEDA, marcaDeCuenta());
 }
 
 function bloqueBuscar(raiz) {
-  const perfil = CUENTA.perfil || {};
-  if (!perfil.nombre || editandoNombre) return formularioNombre(raiz, !!perfil.nombre);
-  const quedan = perfil.busquedas_restantes;
-  return h("div", { class: "bloque buscar", id: "buscar" },
-    h("h3", null, "Mis listas"),
-    h("p", null, "Tu nombre en las listas: ", h("strong", { id: "nom-actual" }, perfil.nombre), " ",
-      h("button", { type: "button", class: "enlace", id: "nom-cambiar", onclick: () => { editandoNombre = true; yo(raiz); } }, "Cambiar")),
-    buscando ? h("p", { class: "tenue", id: "busq-ocupado", role: "status" }, "Buscando en las listas…") : resultadoBusqueda(raiz),
-    buscando ? null : h("div", { class: "campos" },
-      h("button", { type: "button", class: "boton " + (YO.listas.length || busqueda ? "sec" : ""), id: "buscar-listas", disabled: quedan === 0, onclick: () => lanzarBusqueda(raiz) },
-        YO.listas.length ? "Buscar mis listas de nuevo" : "Buscar mis listas"),
-      h("span", { class: "tenue peq", id: "busq-quedan" }, quedan == null ? "" : quedan === 0 ? "Hoy ya no te quedan búsquedas." : `Te quedan ${quedan} ${quedan === 1 ? "búsqueda" : "búsquedas"} hoy.`)));
+  if (!CUENTA.perfil?.nombre) return formularioNombre(raiz);
+  const cuerpo = buscando ? h("p", { class: "tenue", id: "busq-ocupado", role: "status" }, "Buscando tus listas con tu nombre…") : resultadoBusqueda(raiz);
+  return cuerpo ? h("div", { class: "bloque buscar", id: "buscar" }, h("h3", null, "Mis listas"), cuerpo) : null;
 }
 
-function formularioNombre(raiz, cambiando) {
-  const perfil = CUENTA.perfil || {};
+/** Solo si la cuenta aún no tiene nombre. Una vez guardado ya no se cambia desde aquí: si hay un error se avisa a la administración. */
+function formularioNombre(raiz) {
   const error = h("p", { class: "error-txt", id: "nom-error", role: "alert", hidden: true });
-  const entrada = h("input", { type: "text", id: "nom-in", maxlength: 120, autocomplete: "off", placeholder: "GARCÍA LÓPEZ, MARÍA", value: cambiando ? perfil.nombre : "" });
+  const entrada = h("input", { type: "text", id: "nom-in", maxlength: 120, autocomplete: "off", placeholder: "GARCÍA LÓPEZ, MARÍA" });
   return h("form", { class: "bloque buscar", id: "form-nombre", novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     if (!nombreValido(entrada.value)) { error.textContent = ERRORES_NOMBRE.invalido; error.hidden = false; return; }
     e.target.querySelectorAll("button").forEach((b) => { b.disabled = true; });
     const estado = await guardarNombre(entrada.value);
     if (estado !== "ok") { e.target.querySelectorAll("button").forEach((b) => { b.disabled = false; }); error.textContent = ERRORES_NOMBRE[estado] || ERRORES_NOMBRE.error; error.hidden = false; return; }
-    editandoNombre = false; busqueda = null;
+    busqueda = null; autoLanzada = true;
     await lanzarBusqueda(raiz);
   } },
-  h("h3", null, cambiando ? "Cambiar mi nombre en las listas" : "Encuentra tus listas automáticamente"),
-  h("p", { class: "tenue" }, "Escribe tu nombre como sale en los listados de Educaragón (apellidos y nombre) y buscamos en qué listas y especialidades estás."),
+  h("h3", null, "Encuentra tus listas automáticamente"),
+  h("p", { class: "tenue" }, "Escribe tu nombre como sale en los listados de Educaragón (apellidos y nombre) y buscamos solos en qué listas y especialidades estás, cada día."),
   h("label", null, "Mi nombre en las listas", entrada),
-  h("div", { class: "campos" },
-    h("button", { type: "submit", class: "boton", id: "nom-guardar" }, "Guardar y buscar mis listas"),
-    cambiando ? h("button", { type: "button", class: "boton sec", id: "nom-cancelar", onclick: () => { editandoNombre = false; yo(raiz); } }, "Cancelar") : null),
-  h("p", { class: "tenue peq" }, "Solo lo usa tu cuenta para esta búsqueda y la administración puede verlo para ayudarte. En los listados solo salen las personas a las que ya se ha llamado alguna vez este curso; si aún no sales, añade tu posición a mano más abajo.",
-    cambiando && perfil.cambios_restantes != null ? ` Puedes cambiarlo ${perfil.cambios_restantes === 1 ? "1 vez más" : `${perfil.cambios_restantes} veces más`}.` : ""),
+  h("div", { class: "campos" }, h("button", { type: "submit", class: "boton", id: "nom-guardar" }, "Guardar y buscar mis listas")),
+  h("p", { class: "tenue peq" }, "Revísalo bien antes de guardar: después no se puede cambiar desde aquí, solo avisando a la administración. Solo lo usa tu cuenta y la administración puede verlo para ayudarte. En los listados solo salen las personas a las que ya se ha llamado alguna vez este curso."),
   error);
 }
 
@@ -144,31 +208,20 @@ function formularioDni(raiz, texto) {
     h("p", { class: "tenue peq" }, "En los listados el DNI sale tapado (por ejemplo ***1285**); escribe las cifras que se ven. No las guardamos."));
 }
 
+/** Lo que se cuenta de la última búsqueda automática. Si todo ha ido bien y no hay novedades, no se enseña nada (devuelve null). */
 function resultadoBusqueda(raiz) {
   const b = busqueda;
   if (!b) return null;
   const aviso = (texto, id) => h("p", { class: "tenue", id, role: "status" }, texto);
-  if (b.estado === "ok") {
-    const n = b.listas.length;
-    return h("div", { class: "encontradas", id: "busq-ok" },
-      h("p", null, n === 1 ? "Hemos encontrado 1 lista con tu nombre:" : `Hemos encontrado ${n} listas con tu nombre:`),
-      h("ul", null, b.listas.map((l) => h("li", null, h("strong", null, `${l.esp}: ${nombreEspBonito(l.cuerpo_cod, l.esp)}`), ` (${bonito(nombreCuerpo(l.cuerpo_cod))}) · ${textoClave(l.clave)}`))),
-      h("div", { class: "campos" },
-        h("button", { type: "button", class: "boton", id: "busq-anadir", onclick: () => {
-          for (const l of b.listas) { const p = parseClave(l.clave); if (p) anadirLista({ cuerpo_cod: l.cuerpo_cod, esp: l.esp, lista: p.lista, fecha: p.fecha, bloque: p.bloque, orden: p.orden, clave: l.clave }); }
-          guardarYo(); busqueda = { estado: "anadidas", n }; yo(raiz);
-        } }, n === 1 ? "Añadir a mi seguimiento" : "Añadir todas a mi seguimiento"),
-        h("button", { type: "button", class: "boton sec", id: "busq-no", onclick: () => { busqueda = { estado: "no_soy" }; yo(raiz); } }, "No soy yo")));
-  }
-  if (b.estado === "anadidas") return aviso(`Hecho: has añadido ${b.n === 1 ? "1 lista" : b.n + " listas"}. Debajo ves cómo va cada una semana a semana.`, "busq-hecho");
+  const sin = !YO.listas.length;
+  if (b.estado === "anadidas") return aviso(`Hemos encontrado tus listas y las hemos añadido a tu seguimiento: ${b.nombres.join(", ")}.`, "busq-hecho");
   if (b.estado === "varios") return formularioDni(raiz, "Hay varias personas con tu mismo nombre en las listas. Para saber cuál eres, escribe las cifras de tu DNI que salen en los listados.");
-  if (b.estado === "no_soy") return formularioDni(raiz, "Puede haber otra persona con tu mismo nombre. Escribe las cifras de tu DNI que salen en los listados para encontrar las tuyas.");
-  if (b.estado === "no_encontrado") return aviso(b.con_dni
-    ? "No hay nadie con ese nombre y esas cifras del DNI. Revísalas, cambia el nombre o añade tu posición a mano."
-    : "No te hemos encontrado entre las personas convocadas este curso. En los listados semanales solo salen las personas a las que ya se ha llamado alguna vez, así que puede que aún no aparezcas. Comprueba que has escrito el nombre como sale en ellos, o añade tu posición a mano.", "busq-nada");
-  if (b.estado === "limite") return aviso("Has usado las 5 búsquedas de hoy. Vuelve mañana o añade tu posición a mano.", "busq-limite");
+  if (b.estado === "no_encontrado" && b.con_dni) return [aviso("No hay nadie con ese nombre y esas cifras del DNI. Revisa las cifras e inténtalo de nuevo; si tu nombre no es correcto, avisa a la administración (enlace al final de esta página).", "busq-nada"), formularioDni(raiz, "Escribe las cifras de tu DNI que salen en los listados.")];
+  if (b.estado === "no_encontrado") return sin ? aviso("Todavía no sales en las listas de este curso. En los listados semanales solo salen las personas a las que ya se ha llamado alguna vez, así que puede que aún no aparezcas. Lo comprobamos solos cada día; si crees que tu nombre está mal escrito, avisa a la administración (enlace al final de esta página).", "busq-nada") : null;
+  if (b.estado === "limite") return sin ? aviso("Hoy ya no podemos buscar más veces. Lo volvemos a intentar mañana.", "busq-limite") : null;
   if (b.estado === "sin_pase") return aviso("Necesitas un pase en vigor para buscar tus listas.", "busq-sinpase");
-  return aviso("No se pudo buscar ahora mismo. Inténtalo de nuevo en unos minutos.", "busq-error");
+  if (b.estado === "al_dia") return null;
+  return aviso("No se pudo buscar tus listas ahora mismo. Lo intentamos de nuevo la próxima vez que entres.", "busq-error");
 }
 
 function bloqueLista(l, raiz, ro = false) {
@@ -373,6 +426,67 @@ function llenarInvitar(caja, d, msg, wa, tg, texto, usar) {
         msg.className = "tenue peq";
       } }, "Copiar mensaje")),
     usar, msg);
+}
+
+/** Lista corta para empezar (nombre, municipio, favorito, avisos). Desaparece sola al completarla, o con «Ocultar» en este dispositivo. */
+function primerosPasos(raiz) {
+  if (leerLocal(CLAVE_PASOS, false)) return null;
+  const perfil = CUENTA.perfil || {};
+  const ir_a = (id, foco) => () => { const el = document.getElementById(id); if (el) { el.scrollIntoView({ block: "center" }); document.getElementById(foco || id)?.focus(); } };
+  const pasos = [
+    { id: "paso-nombre", hecho: !!perfil.nombre, texto: "Escribe tu nombre como sale en las listas", detalle: "Así la web encuentra sola tus listas y especialidades.",
+      accion: h("button", { type: "button", class: "enlace", onclick: ir_a("form-nombre", "nom-in") }, "Escribirlo") },
+    { id: "paso-casa", hecho: !!perfil.casa, texto: "Elige el municipio donde vives", detalle: "Te decimos a cuántos km y minutos está cada centro y puedes filtrar Vacantes por distancia.",
+      accion: h("button", { type: "button", class: "enlace", onclick: () => { document.getElementById("casa")?.scrollIntoView({ block: "center" }); document.getElementById("casa-cambiar")?.click(); } }, "Elegirlo") },
+    { id: "paso-favorito", hecho: YO.favoritos.length > 0, texto: "Marca un centro como favorito", detalle: "En Vacantes o en Semana, pulsa la estrella de la fila de un centro.",
+      accion: h("a", { href: "#/vacantes" }, "Ir a Vacantes") },
+    { id: "paso-avisos", hecho: (perfil.dispositivos || 0) > 0, texto: "Activa los avisos en la app", detalle: "Te avisamos de vacantes nuevas en tus favoritos y de cada adjudicación de tus listas.",
+      accion: h("a", { href: "#/ajustes" }, "Ir a Ajustes") },
+  ];
+  const hechos = pasos.filter((x) => x.hecho).length;
+  if (hechos === pasos.length) return null;
+  return h("section", { class: "pasos", id: "primeros-pasos", "aria-labelledby": "pasos-titulo" },
+    h("div", { class: "fila-titulo" },
+      h("h3", { id: "pasos-titulo" }, "Primeros pasos ", h("span", { class: "tenue peq", id: "pasos-cuenta" }, `${hechos} de ${pasos.length}`)),
+      h("button", { type: "button", class: "enlace", id: "pasos-ocultar", onclick: () => { guardarLocal(CLAVE_PASOS, true); yo(raiz); } }, "Ocultar")),
+    h("ul", { class: "pasos-lista" }, pasos.map((x) => h("li", { id: x.id, class: x.hecho ? "hecho" : "" },
+      h("span", { class: "pasos-marca", "aria-hidden": "true" }, x.hecho ? "✓" : ""),
+      h("div", null, h("strong", null, x.texto, x.hecho ? h("span", { class: "solo-lector" }, " (hecho)") : null), x.hecho ? null : [h("div", { class: "peq tenue" }, x.detalle), x.accion])))));
+}
+
+// Tarjeta llamativa de Mi seguimiento: «Invita a tus compañeros y consigue la app gratis». Reutiliza el código y los enlaces de «Invita y consigue la app gratis» de Ajustes.
+let referidos = null, referidosHora = 0;     // se guarda un momento para no preguntar al servidor cada vez que se repinta la pantalla
+export function tarjetaInvitar() {
+  const tipo = CUENTA.pase?.tipo;
+  if (tipo === "pago_unico" || tipo === "suscripcion") return null;       // quien ya pagó no necesita el premio
+  const caja = h("section", { class: "tarjeta-invitar", id: "invitar-destacado", "aria-labelledby": "inv-titulo" });
+  const pinta = (d) => {
+    const { texto, wa, tg } = enlacesInvitar(d.codigo);
+    const msg = h("p", { class: "inv-msg", id: "ref-msg", role: "status" });
+    const puntos = Array.from({ length: d.necesarios }, (_, i) => h("span", { class: "inv-punto" + (i < d.pagados ? " lleno" : ""), "aria-hidden": "true" }, i < d.pagados ? "✓" : String(i + 1)));
+    llenar(caja,
+      h("div", { class: "inv-cuerpo" },
+        h("h3", { id: "inv-titulo" }, d.gratis ? "¡Lo has conseguido! Tienes la app gratis este curso" : "Invita a tus compañeros y consigue la app gratis"),
+        h("p", { class: "inv-texto" }, d.gratis
+          ? "Gracias por invitar. Si sigues compartiendo tu código, ayudas a más compañeros a no perderse ninguna vacante."
+          : `Si ${d.necesarios} compañeros se registran con tu código y activan su pase, tu curso es gratis.`),
+        h("div", { class: "inv-progreso", id: "inv-progreso", role: "img", "aria-label": `${d.pagados} de ${d.necesarios} compañeros han activado su pase` },
+          puntos, h("span", { class: "inv-cuenta" }, d.gratis ? "¡Conseguido!" : `Llevas ${d.pagados} de ${d.necesarios}`, d.invitados > d.pagados ? ` · ${d.invitados} ${d.invitados === 1 ? "se ha registrado" : "se han registrado"}` : ""))),
+      h("div", { class: "inv-accion" },
+        h("p", { class: "inv-etiqueta" }, "Tu código"),
+        h("div", { class: "inv-codigo", id: "ref-codigo" }, d.codigo),
+        h("div", { class: "inv-botones" },
+          h("a", { class: "boton-inv", id: "ref-wa", href: wa, target: "_blank", rel: "noopener" }, "WhatsApp"),
+          h("a", { class: "boton-inv", id: "ref-tg", href: tg, target: "_blank", rel: "noopener" }, "Telegram"),
+          h("button", { type: "button", class: "boton-inv sec", id: "ref-copiar", onclick: async () => {
+            try { await navigator.clipboard.writeText(texto); msg.textContent = "Mensaje copiado: pégalo donde quieras."; } catch (e) { msg.textContent = texto; }
+          } }, "Copiar mensaje")),
+        msg));
+  };
+  if (referidos && Date.now() - referidosHora < 60000) { pinta(referidos); return caja; }
+  llenar(caja, h("h3", { id: "inv-titulo" }, "Invita a tus compañeros y consigue la app gratis"), h("p", { class: "inv-texto", id: "ref-carga" }, "Cargando tu código…"));
+  misReferidos().then((d) => { if (!d) { caja.hidden = true; return; } referidos = d; referidosHora = Date.now(); pinta(d); });
+  return caja;
 }
 
 function cabeceraAcceso() {
