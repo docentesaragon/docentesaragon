@@ -5,12 +5,13 @@ import { puedeSeguir } from "./cuenta.js";
 import { ir } from "./ruta.js";
 import { filtrar, opcionesSemana } from "./vacantes.js";
 import { nombreEspBonito } from "./comun.js";
+import { PROVINCIAS_GEO } from "./geo_aragon.js";
 
 const FM = { cuerpo: null, semana: "ult4", prov: "", loc: "", centro: "", esp: "", estado: "todas", jornada: "", duracion: "", tipo: "todas", mis: false };
 const LON0 = -2.35, LON1 = 0.85, LAT0 = 39.75, LAT1 = 42.95, K = Math.cos((41.4 * Math.PI) / 180) * 100;
 const proj = (lat, lon) => [(lon - LON0) * K, (LAT1 - lat) * 100];
 const ANCHO = (LON1 - LON0) * K, ALTO = (LAT1 - LAT0) * 100;
-const PROVINCIAS = [["HUESCA", 42.35, -0.15], ["ZARAGOZA", 41.55, -1.15], ["TERUEL", 40.45, -0.9]];
+const PROVINCIAS = [["HUESCA", 42.35, -0.15], ["ZARAGOZA", 41.25, -1.55], ["TERUEL", 40.45, -0.9]];
 
 let seleccion = null;
 
@@ -52,6 +53,10 @@ export function mapa(raiz, params = {}) {
     grupos = [...por.values()].sort((a, b) => b.n - a.n);
     const sinCoords = grupos.filter((g) => D.locs[g.loc]?.lat == null);
     svg = s("svg", { viewBox: `0 0 ${ANCHO} ${ALTO}`, role: "group", "aria-label": "Mapa de Aragón con círculos por localidad", id: "mapa-svg" });
+    for (const [nombre, anillos] of Object.entries(PROVINCIAS_GEO)) {
+      const d = anillos.map((r) => "M" + r.map(([lo, la]) => proj(la, lo).map((v) => v.toFixed(1)).join(",")).join("L") + "Z").join("");
+      svg.append(s("path", { d, class: "prov prov-" + nombre.toLowerCase(), "aria-hidden": "true" }));
+    }
     for (const [n, la, lo] of PROVINCIAS) { const [x, y] = proj(la, lo); svg.append(s("text", { x, y, "text-anchor": "middle", class: "etiqueta-prov" }, n)); }
     for (const l of Object.values(D.locs)) if (l.lat != null) { const [x, y] = proj(l.lat, l.lon); svg.append(s("circle", { cx: x, cy: y, r: 0.8, class: "fondo-loc" })); }
     nube = s("g", { class: "nube" });

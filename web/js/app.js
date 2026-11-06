@@ -19,6 +19,8 @@ async function pintar() {
   document.querySelectorAll(".pestanas a").forEach((a) => {
     if (a.dataset.vista === nombre) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  const selCurso = document.querySelector(".selector-curso");
+  if (selCurso) selCurso.hidden = nombre === "yo";   // en Mi seguimiento el curso no se elige: el pase ya va por curso
   try {
     if (NECESITA_VACANTES.has(nombre) && D.vacantes._curso !== D.curso) {
       llenar(raiz, h("p", { class: "cargando" }, "Cargando vacantes…"));
