@@ -4,7 +4,7 @@
 // La clave "anon" es PÚBLICA por diseño: solo puede leer (lo garantiza supabase/schema.sql).
 // NUNCA pongas aquí la clave service_role.
 window.CONFIG = {
-  supabaseUrl: "https://docentesaragon.github.io",      // p. ej. "https://abcdefgh.supabase.co"
+  supabaseUrl: "https://gwoamxgvnhietzhixjlf.supabase.co",      // p. ej. "https://abcdefgh.supabase.co"
   supabaseAnonKey: "sb_publishable_H2de5fVQpyV-L9y_5K6DpA_ZQ_zQCUl",  // la clave "anon public"
   supabaseSchema: "aragon",   // esquema de Postgres donde están las tablas (supabase/schema.sql)
   precio: "7,49 €",           // precio que se enseña (dentro de la app de Android se usa el de Google Play)
