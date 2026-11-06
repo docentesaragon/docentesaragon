@@ -232,3 +232,5 @@ a.boton { display: inline-flex; align-items: center; text-decoration: none; }
 .grafico .tip strong { display: block; margin-bottom: .15rem; }
 
 .aviso-pendiente { background: #fff8e1; border: 1px solid #ecd9a0; border-radius: var(--radio); padding: .55rem .8rem; margin: .5rem 0 0; }
+.boton-paddoc { margin-left: auto; display: inline-flex; align-items: center; text-decoration: none; }
+@media (max-width: 560px) { .boton-paddoc { margin-left: 0; flex: 1 1 100%; justify-content: center; } }

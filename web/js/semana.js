@@ -5,28 +5,30 @@ import { regla, segmento, campoSelect, etiquetaActo, situacion, cabeceraActo, no
 
 const estado = { actoId: null, orden: "esp", texto: "" };
 
-export function semana(raiz, params = {}) {
+export function semana(raiz, params = {}, mantener = false) {
   if (params.cuerpo) { YO.cuerpo = params.cuerpo; guardarYo(); }
   const cuerpo = YO.cuerpo;
   const actos = actosDe(D.curso, cuerpo);
-  // Por defecto, la última semana con adjudicación publicada; si hay una oferta más reciente sin adjudicar, se avisa arriba.
-  const ultimaAdjudicada = actos.find((a) => a.tiene_adjudicadas);
-  if (!actos.some((a) => a.acto === estado.actoId)) estado.actoId = (ultimaAdjudicada || actos.find((a) => a.tiene_candidatos) || actos[0])?.acto;
+  // Al entrar en la pestaña se enseña siempre la semana más reciente (aunque su adjudicación aún no esté publicada).
+  if (!mantener) estado.actoId = null;
+  if (!actos.some((a) => a.acto === estado.actoId)) estado.actoId = (actos.find((a) => a.tiene_candidatos || a.tiene_adjudicadas) || actos[0])?.acto;
   const acto = D.actoPorId.get(estado.actoId);
-  const pendiente = ultimaAdjudicada && acto === ultimaAdjudicada ? actos.find((a) => a.fecha_oferta > ultimaAdjudicada.fecha_oferta && !a.tiene_adjudicadas) : null;
+  const ultimaAdjudicada = actos.find((a) => a.tiene_adjudicadas);
+  const sinAdjudicar = acto && !acto.tiene_adjudicadas && ultimaAdjudicada;
 
-  const redibujar = () => semana(raiz);
+  const redibujar = () => semana(raiz, {}, true);
   const controles = h("div", { class: "filtros" },
     h("div", null, h("div", { class: "tenue peq", style: "margin-bottom:.2rem" }, "Cuerpo"),
       segmento([["maestros", "Maestros"], ["secundaria", "Secundaria y otros"]], cuerpo, (v) => { YO.cuerpo = v; guardarYo(); estado.actoId = null; redibujar(); }, "Cuerpo")),
     campoSelect("Semana", actos.map((a) => [a.acto, etiquetaActo(a)]), estado.actoId, (v) => { estado.actoId = v; redibujar(); }, "sel-acto"),
     h("label", null, "Buscar especialidad",
-      h("input", { type: "search", id: "buscar-esp", value: estado.texto, placeholder: "p. ej. inglés", oninput: (e) => { estado.texto = e.target.value; pintarLista(); } })));
+      h("input", { type: "search", id: "buscar-esp", value: estado.texto, placeholder: "p. ej. inglés", oninput: (e) => { estado.texto = e.target.value; pintarLista(); } })),
+    h("a", { class: "boton boton-paddoc", id: "ir-paddoc", href: "#/yo" }, "Solicitud a PADDOC"));
 
   const contLista = h("div", { id: "lista-esp" });
   llenar(raiz, cabeceraActo(acto),
-    pendiente ? h("p", { class: "aviso-pendiente", id: "aviso-pendiente" }, `Ya está publicada la oferta del ${fmtLarga(pendiente.fecha_oferta)}; la adjudicación todavía no. `,
-      h("button", { type: "button", class: "enlace", onclick: () => { estado.actoId = pendiente.acto; redibujar(); } }, "Ver la oferta")) : null,
+    sinAdjudicar ? h("p", { class: "aviso-pendiente", id: "aviso-pendiente" }, "Mientras llega la adjudicación: ",
+      h("button", { type: "button", class: "enlace", onclick: () => { estado.actoId = ultimaAdjudicada.acto; redibujar(); } }, `Ver la última adjudicación (${fmtLarga(ultimaAdjudicada.fecha_adjudicacion)})`)) : null,
     controles, contLista);
 
   function pintarLista() {
