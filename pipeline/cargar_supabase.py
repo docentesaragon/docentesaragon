@@ -121,12 +121,12 @@ def main():
     ap.add_argument("--forzar", action="store_true", help="sobrescribe siempre, aunque los datos nuevos sean peores que los guardados")
     a = ap.parse_args()
 
-       base = os.environ.get("SUPABASE_URL", "").strip().strip("\"'").strip().rstrip("/")
-   if base.endswith("/rest/v1"):
-       base = base[: -len("/rest/v1")]
-   if base and not base.startswith(("http://", "https://")):
-       base = "https://" + base
-   clave = os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip("\"'").strip()
+    base = os.environ.get("SUPABASE_URL", "").strip().strip("\"'").strip().rstrip("/")
+    if base.endswith("/rest/v1"):
+        base = base[: -len("/rest/v1")]
+    if base and not base.startswith(("http://", "https://")):
+        base = "https://" + base
+    clave = os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip("\"'").strip()
     if not a.dry_run and (not base or not clave):
         sys.exit("Faltan las variables SUPABASE_URL y SUPABASE_SERVICE_KEY (ver README, paso 4).")
 
