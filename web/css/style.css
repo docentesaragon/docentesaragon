@@ -408,3 +408,8 @@ td.dist { white-space: nowrap; }
 /* v3.3: casillas de avisos en Ajustes, una por línea */
 #aj-avisos label.check { display: flex; gap: .55rem; align-items: flex-start; margin: .5rem 0; font-size: .95rem; color: var(--tinta); }
 #aj-avisos label.check input { margin-top: .3rem; flex: none; }
+
+/* v3.3.1: tus listas arriba en Semana; títulos de grupo (también en el móvil, donde se oculta la cabecera de columnas) */
+.cab-lista.cab-grupo { display: block; font-weight: 700; color: var(--tinta); font-size: .85rem; }
+.cab-lista.cab-mias { background: var(--oro-fondo); border-bottom: 1px solid var(--oro); box-shadow: inset 4px 0 0 var(--oro); }
+.cab-lista.cab-grupo:not(.cab-mias) { border-top: 1px solid var(--linea); }

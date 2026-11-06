@@ -50,11 +50,20 @@ export function semana(raiz, params = {}, mantener = false) {
       orden("esp", "Especialidad"), orden("plazas", "Plazas"), orden("llegada", "Hasta dónde llegó la lista"),
       h("span", null, "Posición del último llamado"));
     const cajas = [];
+    // Tus listas (las de Mi seguimiento) van siempre arriba, resaltadas, con el mismo orden que el resto; no se repiten abajo.
+    const mios = misListas();
+    const esMia = (u) => mios.some((l) => l.cuerpo_cod === u.cuerpo_cod && l.esp === u.esp);
+    const mias = lista.filter((x) => esMia(x.u)), resto = lista.filter((x) => !esMia(x.u));
+    if (mias.length) {
+      cajas.push(h("div", { class: "cab-lista cab-grupo cab-mias", id: "cab-mias" }, mias.length === 1 ? "Tu lista" : `Tus listas (${mias.length})`));
+      for (const { u, nombre } of mias) cajas.push(fila(u, nombre, !acto?.tiene_adjudicadas, estado.actoId, alCambiar));
+      if (resto.length) cajas.push(h("div", { class: "cab-lista cab-grupo", id: "cab-resto" }, "Resto de especialidades"));
+    }
     let cuerpoPrevio = null;
-    for (const { u, nombre } of lista) {
+    for (const { u, nombre } of resto) {
       if (cuerpo === "secundaria" && u.cuerpo_cod !== cuerpoPrevio) {
         cuerpoPrevio = u.cuerpo_cod;
-        cajas.push(h("div", { class: "cab-lista", style: "display:block;font-weight:700;color:var(--tinta)" }, bonito(nombreCuerpo(u.cuerpo_cod))));
+        cajas.push(h("div", { class: "cab-lista cab-grupo cab-cuerpo" }, bonito(nombreCuerpo(u.cuerpo_cod))));
       }
       cajas.push(fila(u, nombre, !acto?.tiene_adjudicadas, estado.actoId, alCambiar));
     }
