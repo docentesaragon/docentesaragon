@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#b5122b">
+<title>Sin conexión · Docentes Aragón</title>
+<style>
+  :root { --rojo: #b5122b; --oro: #e8a800; --fondo: #edf0f3; --panel: #fff; --tinta: #17212b; --tinta-2: #4a5663; }
+  @media (prefers-color-scheme: dark) { :root { --rojo: #ef6a7d; --fondo: #11171d; --panel: #1a222b; --tinta: #e8edf2; --tinta-2: #aab5c0; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 1.25rem; background: var(--fondo); color: var(--tinta); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 26rem; background: var(--panel); border: 2px solid var(--rojo); border-radius: 12px; padding: 1.5rem; text-align: center; }
+  svg { width: 56px; height: 56px; }
+  h1 { margin: .75rem 0 .5rem; font-size: 1.35rem; color: var(--rojo); }
+  p { margin: .4rem 0; color: var(--tinta-2); }
+  button { margin-top: 1rem; min-height: 44px; padding: .5rem 1.4rem; border: 2px solid var(--rojo); border-radius: 8px; background: var(--rojo); color: var(--panel); font: 700 1rem system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; cursor: pointer; }
+  button:focus-visible { outline: 3px solid var(--oro); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main role="alert">
+  <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="5" fill="#e8a800"/><path fill="#b5122b" d="M5 4h3v24H5zM12 4h3v24h-3zM19 4h3v24h-3zM26 4h3v24h-3z"/></svg>
+  <h1>Sin conexión a internet</h1>
+  <p>Docentes Aragón necesita internet para cargar las adjudicaciones de la semana y tu seguimiento.</p>
+  <p>Comprueba tu conexión (wifi o datos) y vuelve a intentarlo.</p>
+  <button type="button" id="reintentar">Reintentar</button>
+</main>
+<script>
+  document.getElementById("reintentar").addEventListener("click", function () { location.reload(); });
+  window.addEventListener("online", function () { location.reload(); });
+</script>
+</body>
+</html>

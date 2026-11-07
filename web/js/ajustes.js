@@ -183,5 +183,6 @@ function bloqueDatos(raiz) {
     h("p", { class: "tenue peq" }, "Tu posición y tus destinos se guardan en tu cuenta, no en este navegador. ", sync),
     h("div", { class: "campos" }, seguimiento, datos),
     errorDatos ? h("p", { class: "error-txt", id: "aj-datos-error", role: "alert" }, errorDatos) : null,
+    h("p", { class: "tenue peq", id: "aj-eliminar-cuenta" }, "¿Quieres eliminar también tu cuenta de acceso (correo y contraseña)? ", h("a", { href: "eliminar-cuenta.html" }, "Cómo eliminar mi cuenta"), "."),
     h("div", { class: "campos" }, h("button", { type: "button", class: "boton sec", id: "salir-ajustes", onclick: async () => { await salir(); ir("yo"); } }, "Cerrar sesión")));
 }

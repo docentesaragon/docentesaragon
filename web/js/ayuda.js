@@ -10,8 +10,10 @@ function preguntas() {
   return [
     ["Los datos", [
       ["datos", "¿De dónde salen los datos?",
-        [h("p", null, "De los listados en PDF que Educaragón publica cada semana: adjudicaciones, vacantes y candidatos por especialidad. Un proceso automático los lee cada tarde laborable y los carga en la web."),
-          h("p", null, "Esta web no es oficial: no pertenece al Gobierno de Aragón ni a Educaragón. Si algo no cuadra, vale siempre el documento oficial.")]],
+        [h("p", null, "De los listados en PDF que el Departamento de Educación del Gobierno de Aragón publica cada semana en ", h("a", { href: "https://educa.aragon.es", target: "_blank", rel: "noopener" }, "educa.aragon.es"), ": adjudicaciones, vacantes y candidatos por especialidad. Un proceso automático los lee cada día laborable y los carga en la web."),
+          h("p", null, "Esta web y la app no son oficiales: no pertenecen ni están respaldadas por el Gobierno de Aragón ni por Educaragón. Si algo no cuadra, vale siempre el documento oficial.")]],
+      ["oficial", "¿Es una app oficial del Gobierno de Aragón?",
+        [h("p", null, "No. Docentes Aragón es un proyecto independiente de Fuxters, el mismo responsable de DocentsCV. No tiene relación con el Gobierno de Aragón, con Educaragón ni con PADDOC: solo organiza de forma más cómoda información que la administración ya publica. Para tramitar tus peticiones usa siempre la plataforma oficial (el botón «Ir a PADDOC» de Mi seguimiento te lleva a ella).")]],
       ["ultimo-llamado", "¿Qué significa «hasta dónde llegó la lista»?",
         [h("p", null, "Cada semana se adjudica siguiendo el orden de la lista hasta cierta posición: el «último llamado». Si tu posición está antes o es igual, esa semana te habría tocado (si estabas disponible)."),
           h("p", null, "El último llamado no avanza siempre hacia delante: cada semana se llama a quien está disponible, aunque esté más adelante en la lista. Por eso en el histórico puede subir y bajar."),
@@ -46,7 +48,7 @@ function preguntas() {
     ["Privacidad y ayuda", [
       ["privacidad", "¿Qué datos guardáis de mí?",
         [h("p", null, "Tu correo, lo que apuntas en Mi seguimiento (listas, destinos, favoritos), tu nombre y municipio si los has puesto, y los datos técnicos de tus dispositivos de avisos. Nunca guardamos tu DNI. La web pública no muestra nombres ni DNI de nadie."),
-          h("p", null, "Puedes borrar todos tus datos de Aragón desde ", enlace("Ajustes", "#/ajustes"), ". Todo el detalle está en la ", h("a", { href: "privacidad.html" }, "política de privacidad"), ".")]],
+          h("p", null, "Puedes borrar todos tus datos de Aragón desde ", enlace("Ajustes", "#/ajustes"), " y pedir que eliminemos también tu cuenta de acceso en la página ", h("a", { href: "eliminar-cuenta.html" }, "Eliminar mi cuenta"), ". Todo el detalle está en la ", h("a", { href: "privacidad.html" }, "política de privacidad"), ".")]],
       ["contacto", "He visto algo que no está bien o tengo una idea",
         [h("p", null, CUENTA.activa && CUENTA.estado !== "anonimo"
           ? ["Escríbelo en ", enlace("Ajustes › Sugerencias y reclamaciones", "#/ajustes"), ": lo lee la administración y te contesta ahí mismo."]
