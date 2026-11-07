@@ -2,16 +2,24 @@ name: Descarga semanal de Educaragón
 
 on:
   schedule:
-    # Lunes a viernes a las 17:00 UTC (18:00/19:00 en Aragón): ya están publicadas las ofertas de las 14:00
-    # y las adjudicaciones de la mañana.
+    # 1) REINTENTOS DE LA TARDE: de lunes a viernes, cada hora entre las 12 y las 16 UTC (a los 5 minutos, porque a en punto GitHub va saturado).
+    #    pipeline/puerta_horaria.py deja pasar solo las de 14:00 a 17:59 hora de Aragón (invierno = 13-16 UTC, verano = 12-15 UTC).
+    #    Cada pasada mira si Educaragón ha publicado algo que aún no está en la web: si sí, lo sube y avisa; si no, no toca nada y termina en un minuto.
+    - cron: "5 12-16 * * 1-5"
+    # 2) LA DE SIEMPRE: lunes a viernes a las 17:00 UTC (18:00/19:00 en Aragón). Hace la descarga completa, haya o no novedades.
     - cron: "0 17 * * 1-5"
-    # Los domingos, un repaso más largo (30 días) por si Educaragón publicó algún fichero con retraso.
+    # 3) Los domingos, un repaso más largo (30 días) por si Educaragón publicó algún fichero con retraso.
     - cron: "0 18 * * 0"
   workflow_dispatch:
     inputs:
       dias:
         description: "Cuántos días hacia atrás buscar (a mano: 21 por defecto; cada día laborable se usan 7 y los domingos 30)"
         default: "21"
+
+# Nunca dos ejecuciones a la vez (por ejemplo, si una pasada se retrasa o la lanzas a mano mientras corre otra): se ponen en cola.
+concurrency:
+  group: robot-semanal
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -20,19 +28,35 @@ jobs:
   semanal:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # Solo los reintentos horarios de la tarde llevan «solo si hay novedades» y pasan por la puerta horaria.
+      ES_REINTENTO: ${{ github.event.schedule == '5 12-16 * * 1-5' && 'si' || 'no' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Comprobar la hora (solo los reintentos de la tarde)
+        id: puerta
+        run: |
+          if [ "$ES_REINTENTO" = "si" ]; then
+            python pipeline/puerta_horaria.py --reintento
+          else
+            python pipeline/puerta_horaria.py
+          fi
       - name: Instalar herramientas
+        if: steps.puerta.outputs.seguir == 'si'
         run: |
           sudo apt-get update
           sudo apt-get install -y poppler-utils
           pip install pypdf cryptography
-      - name: Bajar, leer y subir a Supabase
+      - name: Bajar, leer, subir a Supabase y avisar a la app
+        if: steps.puerta.outputs.seguir == 'si'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DIAS: ${{ github.event.inputs.dias || (github.event.schedule == '0 18 * * 0' && '30' || '7') }}
-        run: python pipeline/semanal.py --dias "$DIAS" --subir
+        run: |
+          EXTRA=""
+          if [ "$ES_REINTENTO" = "si" ]; then EXTRA="--solo-novedades"; fi
+          python pipeline/semanal.py --dias "$DIAS" --subir $EXTRA
