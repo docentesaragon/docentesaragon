@@ -363,26 +363,28 @@ a.boton.solo-admin { color: var(--rojo); }
 
 .avisar-admin { margin: 1rem 0 .5rem; max-width: none; }
 
-/* La tarjeta de invitación tiene colores propios (rojo oscuro y oro) para que destaque tanto en claro como en oscuro */
-.tarjeta-invitar { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: center; justify-content: space-between; margin: 0 0 1rem; padding: 1.1rem 1.25rem; border-radius: 10px; color: #fff;
-  background: linear-gradient(135deg, #7a0b1c 0%, #b5122b 65%, #c8431a 100%); box-shadow: 0 4px 16px rgba(122, 11, 28, .28); border: 2px solid var(--oro); }
-.tarjeta-invitar h3 { font-size: 1.3rem; color: #fff; }
+/* Tarjeta de invitación (v3.3.2): discreta — fondo del panel (blanco en claro), título y detalles en rojo, texto en negro y borde rojo.
+   Usa las variables del tema, así que en modo oscuro se adapta sola. */
+.tarjeta-invitar { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: center; justify-content: space-between; margin: 0 0 1rem; padding: 1rem 1.25rem; border-radius: 10px;
+  color: var(--tinta); background: var(--panel); border: 2px solid var(--rojo); }
+.tarjeta-invitar h3 { font-size: 1.2rem; color: var(--rojo); }
 .tarjeta-invitar .inv-cuerpo { flex: 1 1 18rem; min-width: 0; }
-.tarjeta-invitar .inv-texto { margin: .35rem 0 .7rem; color: #fff5dc; }
+.tarjeta-invitar .inv-texto { margin: .35rem 0 .7rem; color: var(--tinta); }
 .inv-progreso { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
-.inv-punto { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; border: 2px dashed #ffd76a; color: #ffd76a; font: 700 .95rem var(--f-cifras); }
-.inv-punto.lleno { background: var(--oro); border: 2px solid var(--oro); color: #3a2a00; }
-.inv-cuenta { margin-left: .4rem; font-weight: 600; color: #fff; }
+.inv-punto { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; border: 2px dashed var(--rojo); color: var(--rojo); font: 700 .95rem var(--f-cifras); }
+.inv-punto.lleno { background: var(--rojo); border: 2px solid var(--rojo); color: var(--panel); }
+.inv-cuenta { margin-left: .4rem; font-weight: 600; color: var(--tinta); }
 .inv-accion { flex: 0 1 24rem; display: grid; gap: .4rem; justify-items: start; }
-.inv-etiqueta { margin: 0; font-size: .85rem; color: #fff5dc; }
-.inv-codigo { background: #fff; color: #7a0b1c; border-radius: 8px; padding: .25rem .9rem; font: 800 1.75rem var(--f-cifras); letter-spacing: .08em; user-select: all; }
+.inv-etiqueta { margin: 0; font-size: .85rem; color: var(--tinta-2); }
+.inv-codigo { background: var(--panel); color: var(--rojo); border: 2px dashed var(--rojo); border-radius: 8px; padding: .2rem .9rem; font: 800 1.6rem var(--f-cifras); letter-spacing: .08em; user-select: all; }
 .inv-botones { display: flex; flex-wrap: wrap; gap: .5rem; }
-.boton-inv { display: inline-flex; align-items: center; min-height: 40px; padding: .45rem 1rem; border-radius: var(--radio); background: var(--oro); color: #2b1f00; border: 2px solid var(--oro); font-weight: 700; text-decoration: none; cursor: pointer; }
-.boton-inv.sec { background: transparent; color: #fff; border-color: #ffd76a; }
-.boton-inv:hover { filter: brightness(1.08); }
-.boton-inv:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
-.inv-msg { margin: 0; min-height: 1.2rem; font-size: .85rem; color: #fff5dc; overflow-wrap: anywhere; }
-@media (max-width: 560px) { .tarjeta-invitar { padding: 1rem; } .inv-accion { flex-basis: 100%; } .inv-codigo { font-size: 1.5rem; } }
+.boton-inv { display: inline-flex; align-items: center; min-height: 40px; padding: .45rem 1rem; border-radius: var(--radio); background: var(--rojo); color: var(--panel); border: 2px solid var(--rojo); font-weight: 700; text-decoration: none; cursor: pointer; }
+.boton-inv.sec { background: transparent; color: var(--rojo); border-color: var(--rojo); }
+.boton-inv:hover { filter: brightness(1.12); }
+.boton-inv.sec:hover { background: var(--oro-fondo); filter: none; }
+.boton-inv:focus-visible { outline: 3px solid var(--oro); outline-offset: 2px; }
+.inv-msg { margin: 0; min-height: 1.2rem; font-size: .85rem; color: var(--tinta-2); overflow-wrap: anywhere; }
+@media (max-width: 560px) { .tarjeta-invitar { padding: 1rem; } .inv-accion { flex-basis: 100%; } .inv-codigo { font-size: 1.45rem; } }
 
 /* ---------- v3.3: vacantes cerca de casa y primeros pasos ---------- */
 td.dist { white-space: nowrap; }

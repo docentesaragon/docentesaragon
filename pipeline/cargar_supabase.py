@@ -132,6 +132,17 @@ def no_empeorar(nuevas, existentes, clave_fila, puntuacion):
     return [f for f in nuevas if clave_fila(f) not in previas or puntuacion(f) >= puntuacion(previas[clave_fila(f)])]
 
 
+def conexion():
+    """(url, clave) de Supabase leidos de SUPABASE_URL y SUPABASE_SERVICE_KEY (tolera comillas, barra final y «/rest/v1»)."""
+    base = os.environ.get("SUPABASE_URL", "").strip().strip("\"'").strip().rstrip("/")
+    if base.endswith("/rest/v1"):
+        base = base[: -len("/rest/v1")]
+    if base and not base.startswith(("http://", "https://")):
+        base = "https://" + base
+    clave = os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip("\"'").strip()
+    return base, clave
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("carpeta", nargs="?", help="carpeta con los JSON de procesar.py")
@@ -143,12 +154,7 @@ def main():
     ap.add_argument("--solo-personas", help="solo sube los candidatos privados de este fichero y termina")
     a = ap.parse_args()
 
-    base = os.environ.get("SUPABASE_URL", "").strip().strip("\"'").strip().rstrip("/")
-    if base.endswith("/rest/v1"):
-        base = base[: -len("/rest/v1")]
-    if base and not base.startswith(("http://", "https://")):
-        base = "https://" + base
-    clave = os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip("\"'").strip()
+    base, clave = conexion()
     if not a.dry_run and (not base or not clave):
         sys.exit("Faltan las variables SUPABASE_URL y SUPABASE_SERVICE_KEY (ver README, paso 4).")
 
