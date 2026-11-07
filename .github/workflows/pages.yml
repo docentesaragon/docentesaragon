@@ -24,9 +24,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # La acción oficial «upload-pages-artifact» se salta las carpetas que empiezan por punto, y la app de Android necesita publicar
+      # /.well-known/assetlinks.json (el enlace que une la web con la app). Por eso se empaqueta a mano, incluyendo esas carpetas.
+      - name: Empaquetar la web (incluye .well-known)
+        run: |
+          tar --dereference --hard-dereference -cf "$RUNNER_TEMP/artifact.tar" -C web .
+          if tar -tf "$RUNNER_TEMP/artifact.tar" | grep -q "^\./\.well-known/assetlinks\.json$"; then
+            echo "assetlinks.json incluido: la app de Android podrá verificar la web."
+          else
+            echo "AVISO: todavía no hay web/.well-known/assetlinks.json (hace falta cuando se publique la app de Android; ver GUIA_GOOGLE_PLAY)."
+          fi
+      - uses: actions/upload-artifact@v4
         with:
-          path: web
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
       - id: deployment
         uses: actions/deploy-pages@v4
 
